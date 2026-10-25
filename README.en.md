@@ -9,7 +9,7 @@ _A customer-service system where every design decision can be explained — Lang
 ![React](https://img.shields.io/badge/react-19-61dafb)
 ![Docker](https://img.shields.io/badge/docker-compose-ready-2496ED)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-![Tests](https://img.shields.io/badge/tests-17%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen)
 
 [Quick Start](#-quick-start) · [Architecture](#-architecture) · [Highlights](#-why-its-worth-reading) · [Design FAQ](#-design-decision-faq)
 
@@ -175,12 +175,23 @@ Regex PII / forbidden-term checks are deterministic: free, false-positive-free, 
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest          # 17 passed
+python -m pytest          # 21 passed
 ```
 
-Covers the compliance loop (graph-level, FakeLLM-driven), ticket idempotency, memory
-degradation chains, login rate limiting, and MySQL storage; MySQL-dependent cases
-auto-skip when no server is reachable. CI runs the full suite on every push.
+**Latest full run: 21 passed / 0 failed (2026-10-25, Python 3.12 · Windows, 37.5s); CI re-runs the suite on every push.**
+
+| Module | Cases | What it verifies | Result |
+|---|---|---|---|
+| Compliance repair loop | 3 | Graph-level tests (FakeLLM driving the full LangGraph): pass on first try, degrade after 2 rewrites, pass after one rewrite | ✅ |
+| Ticket idempotency & rate limit | 7 | Semantic key hit/isolation, arg whitelist for LLM extras, working-memory degradation, login 429, AsyncSqliteSaver lifecycle | ✅ |
+| MCP resilience | 3 | Local tools & MCP share the idempotency store, MCP ticket idempotency | ✅ |
+| MySQL fallback & degradation | 4 | Fail-fast self-check, in-process degradation with both backends down, **real MySQL read/write roundtrip** | ✅ |
+| Working memory | 4 | Context read/write, history truncation, session clear, session isolation | ✅ |
+
+> [!NOTE]
+> MySQL cases auto-skip or take the degradation path when no server is reachable, so CI
+> stays green without a real database. With a local MySQL present (as in this run),
+> the roundtrip case performs full read/write verification against the real database.
 
 <details>
 <summary><b>End-to-end evaluation</b></summary>

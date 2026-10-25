@@ -9,7 +9,7 @@ _一个能讲清楚每个设计决策的智能客服系统 —— LangGraph 编�
 ![React](https://img.shields.io/badge/react-19-61dafb)
 ![Docker](https://img.shields.io/badge/docker-compose-ready-2496ED)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-![Tests](https://img.shields.io/badge/tests-17%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen)
 
 [快速开始](#-快速开始) · [系统架构](#-系统架构) · [核心特性](#-为什么值得看) · [设计决策 FAQ](#-设计决策-faq)
 
@@ -175,11 +175,22 @@ evaluation/      8 个端到端评测脚本 + locust 压测
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest          # 17 passed
+python -m pytest          # 21 passed
 ```
 
-覆盖合规回路（FakeLLM 驱动的图级测试）、工单幂等、记忆降级链、登录限流、MySQL 读写；
-MySQL 用例在服务不可达时自动跳过。CI 在每次 push 时全量执行。
+**最近一次全量结果：21 passed / 0 failed（2026-10-25，Python 3.12 · Windows，37.5s），CI 每次推送全量复跑。**
+
+| 模块 | 用例 | 验证什么 | 结果 |
+|---|---|---|---|
+| 合规修复回路 | 3 | 图级测试（FakeLLM 驱动完整 LangGraph）：一次通过、重写 2 次耗尽后降级、重写后通过 | ✅ |
+| 工单幂等与限流 | 7 | 语义幂等键命中/隔离、LLM 多传参数白名单、working memory 降级、登录限流 429、AsyncSqliteSaver 创建关闭 | ✅ |
+| MCP 弹性 | 3 | 本地工具与 MCP 共享幂等存储、MCP 建单幂等 | ✅ |
+| MySQL 兜底与降级链 | 4 | 自检快速失败、Redis+MySQL 双挂时降级进程内、**真实 MySQL 读写往返** | ✅ |
+| 工作记忆 | 4 | 上下文读写、历史截断、会话清理、会话隔离 | ✅ |
+
+> [!NOTE]
+> MySQL 相关用例在服务不可达时自动跳过或走降级路径，CI 上不需要真实数据库也能全绿；
+> 本机有 MySQL 时（如本次）roundtrip 用例会对真实库做完整读写验证。
 
 <details>
 <summary><b>端到端评测</b></summary>
