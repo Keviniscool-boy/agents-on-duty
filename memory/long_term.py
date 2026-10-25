@@ -7,9 +7,65 @@ import faiss
 import numpy as np
 from dotenv import load_dotenv
 from langchain_community.embeddings import DashScopeEmbeddings
+from langchain_openai import OpenAIEmbeddings
 
 
 load_dotenv()
+
+
+class _LazyEmbeddings:
+    """延迟构造真实 embedding 客户端。
+
+    api.main 在模块级实例化 LongTermMemory，构造即校验会让没配 key 的
+    环境 import 就炸；这里把失败推迟到首次调用，与旧 DashScope 行为一致。
+    """
+
+    def __init__(self, factory):
+        self._factory = factory
+        self._inner = None
+
+    async def aembed_query(self, text: str) -> list[float]:
+        if self._inner is None:
+            self._inner = self._factory()
+        return await self._inner.aembed_query(text)
+
+
+def _build_embeddings() -> tuple[object, dict]:
+    """选择 embedding 实现。
+
+    显式配置 DASHSCOPE_API_KEY 时优先走 DashScope 原生接口（保持向后兼容）；
+    否则走 OpenAI 兼容接口（OPENAI_BASE_URL + OPENAI_API_KEY + EMBEDDING_MODEL），
+    任何提供 /embeddings 的服务都可用。
+    返回 (embeddings 实例, 供索引校验的身份标识)。
+    """
+    dashscope_key = os.getenv("DASHSCOPE_API_KEY")
+    if dashscope_key:
+        return (
+            DashScopeEmbeddings(
+                model=os.getenv("EMBEDDING_MODEL", "text-embedding-v3"),
+                dashscope_api_key=dashscope_key,
+            ),
+            {
+                "provider": "dashscope",
+                "model": os.getenv("EMBEDDING_MODEL", "text-embedding-v3"),
+            },
+        )
+
+    identity = {
+        "provider": "openai-compatible",
+        "model": os.getenv("EMBEDDING_MODEL", "text-embedding-v3"),
+    }
+    return (
+        _LazyEmbeddings(
+            lambda: OpenAIEmbeddings(
+                model=os.getenv("EMBEDDING_MODEL", "text-embedding-v3"),
+                # 空字符串视为未配置，交给 openai 客户端报出清晰错误。
+                api_key=os.getenv("OPENAI_API_KEY") or None,
+                base_url=os.getenv("OPENAI_BASE_URL") or None,
+            )
+        ),
+        identity,
+    )
 
 
 class LongTermMemory:
@@ -20,16 +76,18 @@ class LongTermMemory:
         index_path: str = "./vector_store/faiss_index",
     ):
         self.index_path = Path(index_path)
-        self.embeddings = DashScopeEmbeddings(
-            model=os.getenv("EMBEDDING_MODEL", "text-embedding-v3"),
-            dashscope_api_key=os.getenv("DASHSCOPE_API_KEY"),
-        )
+        self.embeddings, self.embedding_identity = _build_embeddings()
         self.documents = []
         self.index = None
         self._init_index()
 
     def _init_index(self) -> None:
-        """从磁盘加载已有的 FAISS 索引和文档元数据。"""
+        """从磁盘加载已有的 FAISS 索引和文档元数据。
+
+        元数据里记录了建索引时的 embedding 身份（provider + model）；
+        与当前配置不一致时丢弃索引——不同模型向量空间不同，混用会
+        导致检索全错甚至维度崩溃，必须整库重建。
+        """
         metadata_path = self.index_path.with_suffix(".meta.json")
 
         if not self.index_path.exists():
@@ -39,16 +97,31 @@ class LongTermMemory:
             self.index = faiss.read_index(str(self.index_path))
 
             if metadata_path.exists():
-                self.documents = json.loads(
+                metadata = json.loads(
                     metadata_path.read_text(encoding="utf-8")
                 )
+                if isinstance(metadata, dict):
+                    stored_identity = metadata.get("embedding", {})
+                    if stored_identity != self.embedding_identity:
+                        print(
+                            "Embedding 配置已变更 "
+                            f"({stored_identity} -> {self.embedding_identity})，"
+                            "丢弃旧索引，将在启动时用当前模型重建。"
+                        )
+                        self.index = None
+                        self.documents = []
+                        return
+                    self.documents = metadata.get("documents", [])
+                else:
+                    # 旧格式（纯文档列表）：无身份信息，默认可用。
+                    self.documents = metadata
         except Exception:
             # 索引损坏时从空知识库开始，避免服务无法启动。
             self.index = None
             self.documents = []
 
     async def embed_text(self, text: str) -> list[float]:
-        """调用阿里云 Embedding，将文本转换成向量。"""
+        """调用配置的 Embedding 服务，将文本转换成向量。"""
         return await self.embeddings.aembed_query(text)
 
     async def add_document(
@@ -111,7 +184,14 @@ class LongTermMemory:
 
         metadata_path = self.index_path.with_suffix(".meta.json")
         metadata_path.write_text(
-            json.dumps(self.documents, ensure_ascii=False, indent=2),
+            json.dumps(
+                {
+                    "embedding": self.embedding_identity,
+                    "documents": self.documents,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
 

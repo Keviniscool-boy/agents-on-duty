@@ -21,7 +21,7 @@ _A customer-service system where every design decision can be explained — Lang
 
 This is a runnable multi-agent customer-service learning project. A Supervisor dispatches requests to knowledge retrieval, order/ticket tools, or fallback. Responses go through rules and LLM compliance checks; failed responses are rewritten up to twice before a fixed fallback. Order data is mocked, and the compliance checks demonstrate the architecture rather than a production policy.
 
-Chat history and routing context prefer Redis, then MySQL, then in-process storage. The vector knowledge base uses FAISS and DashScope embeddings. JWT auth, login rate limiting, PII detection, ticket idempotency, SSE progress events, and OpenTelemetry metrics are also present.
+Chat history and routing context prefer Redis, then MySQL, then in-process storage. The vector knowledge base uses FAISS with pluggable embeddings (DashScope native, or any OpenAI-compatible endpoint). JWT auth, login rate limiting, PII detection, ticket idempotency, SSE progress events, and OpenTelemetry metrics are also present.
 
 The project is meant for **learning**. Start with `agents/supervisor.py`, then read `memory/` and `api/main.py`. The order and logistics tools use bundled mock data; the compliance rules and small evaluation sets need further work before production use.
 
@@ -41,7 +41,7 @@ Most Agent tutorials stop at "the demo runs". This project finishes the problems
 ## 🚀 Quick Start
 
 > [!TIP]
-> You need Docker, an OpenAI-compatible chat model, and a DashScope embedding key. The first start indexes the bundled knowledge-base text.
+> You need Docker, an OpenAI-compatible chat model, and an embedding service — set `DASHSCOPE_API_KEY` for the Aliyun-native path, or leave it empty to reuse `OPENAI_BASE_URL` with any OpenAI-compatible endpoint.
 
 ```bash
 # 1. Configure the environment
@@ -187,7 +187,7 @@ pip install -r requirements-dev.txt
 DASHSCOPE_API_KEY=dummy-key-for-ci python -m pytest -q
 ```
 
-Local recheck on 2026-10-25 passed on Python 3.14 / Windows with a dummy embedding key. CI uses Python 3.12. A real DashScope key is required to run chat and create the initial index.
+Local recheck on 2026-10-25 passed on Python 3.14 / Windows with a dummy embedding key. CI uses Python 3.12. A valid embedding credential (DashScope or OpenAI-compatible) is required to run chat and create the initial index.
 
 | Module | Cases | What it verifies | Result |
 |---|---|---|---|

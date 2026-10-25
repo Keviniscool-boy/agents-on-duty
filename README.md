@@ -44,7 +44,7 @@ _可运行的 LangGraph 客服系统：从意图路由、RAG / MCP 工具到合�
 ## 🚀 快速开始
 
 > [!TIP]
-> 需要 Docker、兼容 OpenAI API 的聊天模型，以及阿里云 DashScope embedding key。首次启动会为 `knowledge_base/` 中的文本生成向量索引。
+> 需要 Docker、一个 OpenAI 兼容的聊天模型，以及一个 embedding 服务——配置 `DASHSCOPE_API_KEY` 走阿里云原生接口，或留空复用 `OPENAI_BASE_URL` 走任何 OpenAI 兼容接口。首次启动会为 `knowledge_base/` 中的文本生成向量索引。
 
 ```bash
 # 1. 配置环境变量
@@ -53,7 +53,8 @@ cd agents-on-duty
 cp .env.example .env
 #    编辑 .env，至少填写：
 #    OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME
-#    DASHSCOPE_API_KEY、MYSQL_PASSWORD、JWT_SECRET_KEY
+#    EMBEDDING 服务凭据（DASHSCOPE_API_KEY 或 OPENAI_BASE_URL）、
+#    MYSQL_PASSWORD、JWT_SECRET_KEY
 #    若 8080 已被占用，把 FRONTEND_PORT 改成 8081
 
 # 2. 一键启动
@@ -193,7 +194,7 @@ pip install -r requirements-dev.txt
 DASHSCOPE_API_KEY=dummy-key-for-ci python -m pytest -q
 ```
 
-本地复核（2026-10-25）：测试在 Python 3.14 / Windows、dummy embedding key 下通过。CI 使用 Python 3.12。测试不发起真实 embedding 请求；运行聊天和首次建索引需要有效的 DashScope key。
+本地复核（2026-10-25）：测试在 Python 3.14 / Windows、dummy embedding key 下通过。CI 使用 Python 3.12。测试不发起真实 embedding 请求；运行聊天和首次建索引需要有效的 embedding 服务凭据（DashScope 或 OpenAI 兼容）。
 
 | 模块 | 用例 | 验证什么 | 结果 |
 |---|---|---|---|
