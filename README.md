@@ -4,12 +4,10 @@
 
 _一个能讲清楚每个设计决策的智能客服系统 —— LangGraph 编排 · 合规修复回路 · 三层记忆三级降级_
 
-[![CI](https://github.com/Keviniscool-boy/agents-on-duty/actions/workflows/ci.yml/badge.svg)](https://github.com/Keviniscool-boy/agents-on-duty/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/python-3.12%2B-blue)
-![React](https://img.shields.io/badge/react-19-61dafb)
-![Docker](https://img.shields.io/badge/docker-compose-ready-2496ED)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-![Tests](https://img.shields.io/badge/tests-21%20passed-brightgreen)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org)
+[![LangGraph](https://img.shields.io/badge/LangGraph-orchestration-77C5A3)](https://langchain-ai.github.io/langgraph/)
+[![React](https://img.shields.io/badge/react-19-61dafb)](https://react.dev)
+[![Docker](https://img.shields.io/badge/docker-compose-2496ED)](https://docs.docker.com/compose/)
 
 [快速开始](#-快速开始) · [系统架构](#-系统架构) · [核心特性](#-为什么值得看) · [设计决策 FAQ](#-设计决策-faq)
 
