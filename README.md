@@ -131,17 +131,6 @@ evaluation/      8 个评测脚本：路由/RAG/合规/MCP/记忆/鉴权 + locus
 **Q：合规检查为什么是"规则先行，LLM 补充"？**
 正则查 PII、敏感词是确定性的：零成本、零误判、毫秒级返回；LLM 只在规则放行后做语义层面的深查（如变相收益承诺）。规则判高危时直接短路，连 LLM 都不用调。见 `agents/compliance_checker.py` 的 `full_check`。
 
-## 已知限制 / Roadmap
-
-坦诚说，这个项目还有这些没做完（也正好是练手方向）：
-
-- [ ] `order_query` 返回 mock 数据——接真实订单系统（或做一个可配置的假数据服务）
-- [ ] Agent 调用指标还在进程内——多 worker 不互通、重启清零，应落 MySQL
-- [ ] JWT 无登出/吊销机制——登出只删前端 token，签发的 token 到期前一直有效
-- [ ] MySQL 侧数据无生命周期管理——对话消息、checkpoint 无限增长，需要 TTL 清理
-- [ ] 3 个早期测试是脚本风格（import 即执行）——待改写成 pytest 用例
-- [ ] 无前端截图/GIF 演示——等系统跑起来补
-
 ## 测试
 
 ```bash

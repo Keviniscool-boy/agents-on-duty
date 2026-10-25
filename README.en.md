@@ -116,15 +116,6 @@ Chat streaming is one-directional (server → client events). SSE rides plain HT
 **Q: Why "rules first, LLM second" for compliance?**
 Regex PII / forbidden-term checks are deterministic: free, false-positive-free, millisecond-fast. The LLM only reviews semantic risks after rules pass. High-risk rule hits short-circuit before any LLM call. See `full_check` in `agents/compliance_checker.py`.
 
-## Known limitations / Roadmap
-
-- [ ] `order_query` returns mock data — wire up a real order service
-- [ ] Agent metrics are in-process only — should be flushed to MySQL
-- [ ] No JWT logout/revocation — tokens are valid until expiry
-- [ ] No TTL management on the MySQL side — messages and checkpoints grow forever
-- [ ] 3 legacy script-style tests — to be converted to pytest
-- [ ] No frontend screenshot/GIF demo yet
-
 ## Testing
 
 ```bash
