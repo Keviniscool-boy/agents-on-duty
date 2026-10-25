@@ -1,7 +1,7 @@
 # Your First Multi-Agent Project
 
 <p align="center">
-  <a href="https://github.com/Keviniscool-boy/smart-cs-multi-agent/actions/workflows/ci.yml"><img src="https://github.com/Keviniscool-boy/smart-cs-multi-agent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Keviniscool-boy/agents-on-duty/actions/workflows/ci.yml"><img src="https://github.com/Keviniscool-boy/agents-on-duty/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python">
   <img src="https://img.shields.io/badge/LangGraph-%E2%9C%93-teal" alt="LangGraph">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
