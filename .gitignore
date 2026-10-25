@@ -1,0 +1,25 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Frontend build artifacts and dependencies
+frontend/node_modules/
+frontend/dist/
+
+# Runtime data (SQLite auth/idempotency/checkpoints, generated vector index)
+vector_store/
+data/
+
+# Evaluation output
+evaluation/results/
+
+# Editor
+.vscode/
+.idea/

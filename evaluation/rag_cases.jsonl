@@ -1,0 +1,25 @@
+{"id":"rag-001","question":"商品签收后多少天内可以申请退货？","expected_source":"return_policy.txt","expected_keywords":["7","退货"]}
+{"id":"rag-002","question":"申请退货时商品需要满足什么条件？","expected_source":"return_policy.txt","expected_keywords":["未使用","完整包装"]}
+{"id":"rag-003","question":"签收后第5天还能申请退货吗？","expected_source":"return_policy.txt","expected_keywords":["可以","7"]}
+{"id":"rag-004","question":"商品用了以后还能申请退货吗？","expected_source":"return_policy.txt","expected_keywords":["未使用"]}
+{"id":"rag-005","question":"理财产品A的参考年化收益率是多少？","expected_source":"product_faq.txt","expected_keywords":["3.5%","5.2%"]}
+{"id":"rag-006","question":"理财产品A的投资期限和最低金额是多少？","expected_source":"product_faq.txt","expected_keywords":["6个月","10000"]}
+{"id":"rag-007","question":"理财产品A是不是银行存款？","expected_source":"product_faq.txt","expected_keywords":["不是","风险"]}
+{"id":"rag-008","question":"客服可以承诺理财产品保本吗？","expected_source":"product_faq.txt","expected_keywords":["不能","承诺"]}
+{"id":"rag-009","question":"开户需要准备什么证件？","expected_source":"account_guide.txt","expected_keywords":["身份证"]}
+{"id":"rag-010","question":"完整开户流程有哪些步骤？","expected_source":"account_guide.txt","expected_keywords":["视频认证","交易密码"]}
+{"id":"rag-011","question":"开户大概要花多长时间？","expected_source":"account_guide.txt","expected_keywords":["15","30分钟"]}
+{"id":"rag-012","question":"风险评估问卷可以随便填写吗？","expected_source":"account_guide.txt","expected_keywords":["如实","风险评估"]}
+{"id":"rag-013","question":"查询物流时最好提供什么信息？","expected_source":"logistics_guide.txt","expected_keywords":["订单号"]}
+{"id":"rag-014","question":"为什么刚创建的订单查不到物流？","expected_source":"logistics_guide.txt","expected_keywords":["刚刚创建","物流"]}
+{"id":"rag-015","question":"物流长时间没有更新应该怎么办？","expected_source":"logistics_guide.txt","expected_keywords":["工单"]}
+{"id":"rag-016","question":"客服可以自己编造预计送达时间吗？","expected_source":"logistics_guide.txt","expected_keywords":["不应","编造"]}
+{"id":"rag-017","question":"智能客服可以处理哪些问题？","expected_source":"service_policy.txt","expected_keywords":["订单状态","物流信息"]}
+{"id":"rag-018","question":"无法确认的信息应该怎么回答？","expected_source":"service_policy.txt","expected_keywords":["没有","猜测"]}
+{"id":"rag-019","question":"聊天时可以发送完整身份证号吗？","expected_source":"service_policy.txt","expected_keywords":["不应","敏感"]}
+{"id":"rag-020","question":"哪些情况需要通过安全渠道提交？","expected_source":"service_policy.txt","expected_keywords":["人工处理","安全渠道"]}
+{"id":"rag-021","question":"公司的发票申请流程是什么？","expected_source":null,"expected_keywords":["没有","相关"]}
+{"id":"rag-022","question":"如何修改绑定手机号？","expected_source":null,"expected_keywords":["没有","相关"]}
+{"id":"rag-023","question":"客服周末是否提供人工服务？","expected_source":null,"expected_keywords":["没有","相关"]}
+{"id":"rag-024","question":"订单 ORD-20260401-001 的具体物流公司是哪家？","expected_source":null,"expected_keywords":["没有","相关"]}
+{"id":"rag-025","question":"账户余额可以提现吗？","expected_source":null,"expected_keywords":["没有","相关"]}
