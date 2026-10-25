@@ -23,3 +23,6 @@ evaluation/results/
 # Editor
 .vscode/
 .idea/
+
+# Onboard 拆解包（本地学习材料，不入库）
+项目拆解包/
