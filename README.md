@@ -1,15 +1,15 @@
 <div align="center">
 
-# 🧑‍💼 你的第一个多 Agent 项目
+# Agents on Duty
 
-_一个能讲清楚每个设计决策的智能客服系统 —— LangGraph 编排 · 合规修复回路 · 三层记忆三级降级_
+_可运行的 LangGraph 客服系统：从意图路由、RAG / MCP 工具到合规出站_
 
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-orchestration-77C5A3)](https://langchain-ai.github.io/langgraph/)
 [![React](https://img.shields.io/badge/react-19-61dafb)](https://react.dev)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED)](https://docs.docker.com/compose/)
 
-[项目介绍](docs/project-intro.zh.md) · [快速开始](#-快速开始) · [系统架构](#-系统架构) · [核心特性](#-为什么值得看) · [设计决策 FAQ](#-设计决策-faq)
+[快速开始](#-快速开始) · [看运行过程](#-一条消息如何流转) · [架构](#-系统架构) · [设计决策](#-设计决策-faq) · [测试](#-测试)
 
 **简体中文** | [English](README.en.md)
 
@@ -19,30 +19,32 @@ _一个能讲清楚每个设计决策的智能客服系统 —— LangGraph 编�
 
 ## 📖 项目介绍
 
-这是一个模拟真实客服场景的完整多 Agent 系统：Supervisor 按意图把请求分派给知识库检索（FAISS RAG）、业务办理（MCP 工具）或兜底应答，每个回答出站前都要过「规则 + LLM」双重合规审查，不合规的回答带着违规原因自动重写，重试耗尽则降级为固定话术。三层记忆各自带降级路径，JWT、限流、幂等、SSE 流式、可观测性一应俱全——定位是**学习项目**，但用的全是生产模式。
+这是一个可运行的多 Agent 客服学习项目。用户发消息后，LangGraph 的 Supervisor 将请求分给知识库问答、订单/工单工具或兜底节点；回答经过规则和 LLM 合规检查，违规时最多重写两次，再转固定话术。React 界面通过 SSE 展示节点进度。
+
+**适合谁：**想读懂 LangGraph 状态图、RAG 与 MCP 工具调用，以及失败后如何降级的开发者。订单和物流使用仓库内 mock 数据；合规规则与样本评测用于学习和演示，不能直接作为生产风控方案。
 
 > [!TIP]
 > **想深挖这个项目？** 完整版介绍在 [docs/project-intro.zh.md](docs/project-intro.zh.md)：
 > 一条消息的 8 步完整旅程（带代码位置）· 技术选型对照表 · **面试官视角的 22 个问题与答题要点** · 三分钟开场话术。
-> 如果你是面试官，里面就是你会问的全部问题。
+> 可以从问题跳到相应代码，核查设计取舍。
 
 ## 🎯 为什么值得看
 
-网上大多 Agent 教程止步于「跑通 demo」，这个项目把真实业务才会遇到的问题做完了——**每个模块都对应一个你在生产环境和面试里会被问到的工程问题**：
+沿一条消息就能看到编排、工具、合规和状态存储如何配合。建议先跑起来，再从 [`agents/supervisor.py`](agents/supervisor.py) 读状态图。
 
 - 🧭 **Supervisor 编排** —— 意图路由带确定性快路径：高频简单请求本地正则直接分流，一个 LLM 调用都省
 - 🛡️ **合规修复回路** —— 不合规回答不是简单拦截，而是带着违规原因**重写**（≤2 次），耗尽自动降级兜底话术
-- 🪆 **三级降级链** —— Redis 挂了走 MySQL，MySQL 挂了走进程内；而 MySQL 本身是硬依赖，启动自检失败拒绝启动——**每个组件的失效语义都想清楚了**
+- 🪆 **记忆降级** —— 对话和工作上下文优先 Redis，失败时尝试 MySQL，再退到进程内；MySQL 启动自检失败会阻止服务启动
 - 🎫 **语义化幂等** —— 工单幂等键用「用户 + 内容指纹」而非请求 ID，防得住网络重试，也防得住"用户再说一遍"
-- 🔌 **MCP 工具调用** —— 标准协议接入订单系统，网络异常有限重试 + 本地工具降级，两边共享幂等存储
+- 🔌 **MCP 工具调用** —— stdio MCP Server 提供模拟订单数据；调用失败有限重试，再走本地工具，工单共用 SQLite 幂等记录
 - 📡 **SSE 实时流式** —— `graph.astream(stream_mode="updates")` 直接映射为事件流，前端能看到 Agent 一步一步干活
-- 🔐 **完整安全栈** —— JWT 鉴权、PBKDF2 密码哈希、登录限流、会话归属校验、PII 自动脱敏
+- 🔐 **基础安全控制** —— JWT 鉴权、PBKDF2 密码哈希、登录限流、会话归属校验、基于正则的 PII 检测与脱敏
 - 📊 **可观测性** —— OpenTelemetry 追踪 + 每个 Agent 的调用指标，前端自带运维面板
 
 ## 🚀 快速开始
 
 > [!TIP]
-> 全栈一键启动（MySQL + Redis + 后端 + 前端），只需要 Docker 和一个 LLM API Key。
+> 需要 Docker、兼容 OpenAI API 的聊天模型，以及阿里云 DashScope embedding key。首次启动会为 `knowledge_base/` 中的文本生成向量索引。
 
 ```bash
 # 1. 配置环境变量
@@ -51,21 +53,27 @@ cd agents-on-duty
 cp .env.example .env
 #    编辑 .env，至少填写：
 #    OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME
-#    以及 MYSQL_PASSWORD（compose 会用它初始化 MySQL）
+#    DASHSCOPE_API_KEY、MYSQL_PASSWORD、JWT_SECRET_KEY
+#    若 8080 已被占用，把 FRONTEND_PORT 改成 8081
 
 # 2. 一键启动
 docker compose up --build -d
 
-# 3. 浏览器打开 http://localhost:8080，注册账号，开始对话 ✅
+# 3. 浏览器打开 http://localhost:8080（或设置的 FRONTEND_PORT）
+#    注册账号后开始对话
 ```
 
-试试这三个典型问题，观察回复下方的 Agent 轨迹标签：
+## 🔎 一条消息如何流转
+
+试试这三个问题，观察界面显示的 Agent 节点：
 
 | 你问 | 谁来接 | 你会看到 |
 |---|---|---|
 | 「商品签收后几天内可以退货？」 | 📚 知识库 RAG | FAISS 检索 → 合规通过 |
-| 「查询订单 ORD-20260401-001 的物流」 | 🎫 业务办理 | MCP 工具调用 → 合规通过 |
-| 「写一段小说」 | 💬 兜底应答 | 礼貌拒绝 |
+| 「查询订单 1001 的状态」 | 🎫 业务办理 | MCP 工具调用 → 合规检查 |
+| 「写一段小说」 | 💬 兜底应答 | 进入兜底节点 |
+
+订单查询用于演示工具链：MCP Server 目前对传入的订单号返回固定模拟状态；MCP 失败后的本地工具才使用 [`tools/mock_data.py`](tools/mock_data.py) 中的 `1001/1002` 数据。不要用它验证真实物流准确性。
 
 <details>
 <summary><b>不用 Docker，手动部署</b></summary>
@@ -79,7 +87,7 @@ uvicorn api.main:app --port 8000
 cd frontend && npm install && npm run dev   # http://localhost:5173
 ```
 
-环境变量逐项说明见 `.env.example`。
+环境变量名见 [`.env.example`](.env.example)。本机还需启动 MySQL；Redis 不可达时可降级，但会增加访问 MySQL 的压力。
 </details>
 
 ## 🏗️ 系统架构
@@ -103,22 +111,22 @@ flowchart TD
     style C fill:#eef3f8,stroke:#2f5d8a
 ```
 
-## 🧠 三层记忆 · 三级降级
+## 🧠 三层记忆与降级
 
 > [!NOTE]
-> 这是本项目最值得细读的部分：**每一份数据都有明确的归属和失效语义**。
+> 对话、工作上下文和知识库是三种不同的记忆。下表也列出与它们配合的持久化数据。
 
 | 数据 | 第一选择 | 兜底 | 寿命 |
 |---|---|---|---|
 | 对话历史 | Redis（30 min TTL） | MySQL → 进程内 | 短期 |
 | 路由 / 合规上下文 | Redis（24 h TTL） | MySQL → 进程内 | 会话级 |
 | 用户账户、会话归属 | SQLite | — | 永久 |
-| LangGraph 断点 | AsyncSqliteSaver | 进程内 | 永久，重启可恢复 |
+| LangGraph 断点 | AsyncSqliteSaver | 进程内 | SQLite 可跨重启恢复；内存兜底不可 |
 | 工单幂等记录 | SQLite | — | 永久 |
-| 订单 / 物流 | **不落库**，MCP 实时查询 | — | 数据留在订单系统 |
+| 订单 / 物流 | MCP 固定模拟结果 | 本地 mock 表 | 演示数据不写入本服务数据库 |
 
 - MySQL 是兜底数据源 → **硬依赖**，启动自检失败直接拒绝启动
-- Redis 是热缓存 → 挂了**只是变慢**，服务不中断
+- Redis 是热缓存 → 运行中不可达时尝试 MySQL，再退进程内；内存兜底不跨进程或重启
 - 所有落 MySQL 的上下文都带 `user_id` / `session_id`，可审计
 
 ## 🗂️ 项目结构
@@ -147,9 +155,9 @@ evaluation/      8 个端到端评测脚本 + locust 压测
 </details>
 
 <details>
-<summary><b>为什么 MySQL 是硬依赖，Redis 却允许挂？</b></summary>
+<summary><b>为什么 MySQL 是启动硬依赖，Redis 却允许挂？</b></summary>
 <br>
-分工不同：Redis 是热缓存，挂了降级 MySQL 只是变慢；MySQL 是兜底数据源，它挂了意味着所有上下文无处落地——与其带病运行不如快速失败。
+启动时 `self_check` 要求 MySQL 可用。运行中 Redis 读写失败会尝试 MySQL；若 MySQL 此时也失败，部分上下文暂存在进程内，重启后会丢失。
 <br><br><code>storage/mysql_store.py → self_check</code>
 </details>
 
@@ -174,7 +182,7 @@ evaluation/      8 个端到端评测脚本 + locust 压测
 <details>
 <summary><b>合规检查为什么"规则先行，LLM 补充"？</b></summary>
 <br>
-正则查 PII、敏感词是确定性的：零成本、零误判、毫秒级；LLM 只在规则放行后做语义深查。规则判高危直接短路，连 LLM 调用都省掉。
+正则检查可在本地快速识别常见 PII 和固定敏感词；命中时短路 LLM 审查。它可能误伤普通长数字，也无法覆盖所有表达，规则未命中时再交给 LLM 做语义检查。
 <br><br><code>agents/compliance_checker.py → full_check</code>
 </details>
 
@@ -182,22 +190,21 @@ evaluation/      8 个端到端评测脚本 + locust 压测
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest          # 21 passed
+DASHSCOPE_API_KEY=dummy-key-for-ci python -m pytest -q
 ```
 
-**最近一次全量结果：21 passed / 0 failed（2026-10-25，Python 3.12 · Windows，37.5s），CI 每次推送全量复跑。**
+本地复核（2026-10-25）：测试在 Python 3.14 / Windows、dummy embedding key 下通过。CI 使用 Python 3.12。测试不发起真实 embedding 请求；运行聊天和首次建索引需要有效的 DashScope key。
 
 | 模块 | 用例 | 验证什么 | 结果 |
 |---|---|---|---|
 | 合规修复回路 | 3 | 图级测试（FakeLLM 驱动完整 LangGraph）：一次通过、重写 2 次耗尽后降级、重写后通过 | ✅ |
 | 工单幂等与限流 | 7 | 语义幂等键命中/隔离、LLM 多传参数白名单、working memory 降级、登录限流 429、AsyncSqliteSaver 创建关闭 | ✅ |
 | MCP 弹性 | 3 | 本地工具与 MCP 共享幂等存储、MCP 建单幂等 | ✅ |
-| MySQL 兜底与降级链 | 4 | 自检快速失败、Redis+MySQL 双挂时降级进程内、**真实 MySQL 读写往返** | ✅ |
+| MySQL 兜底与降级链 | 4 | 自检快速失败、双挂时进程内降级；MySQL 可达时做读写往返 | ✅ / 条件执行 |
 | 工作记忆 | 4 | 上下文读写、历史截断、会话清理、会话隔离 | ✅ |
 
 > [!NOTE]
-> MySQL 相关用例在服务不可达时自动跳过或走降级路径，CI 上不需要真实数据库也能全绿；
-> 本机有 MySQL 时（如本次）roundtrip 用例会对真实库做完整读写验证。
+> `test_mysql_store_roundtrip` 在 MySQL 不可达时直接返回，因此全绿不代表真实数据库往返已执行。本机复核打印了 `SKIP test_mysql_store_roundtrip (no MySQL reachable)`。
 
 <details>
 <summary><b>端到端评测</b></summary>

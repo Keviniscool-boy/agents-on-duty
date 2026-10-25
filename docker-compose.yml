@@ -47,7 +47,7 @@ services:
         # 浏览器从宿主机访问后端，走 compose 映射出来的 8000 端口。
         VITE_API_URL: http://localhost:8000
     ports:
-      - "8080:80"
+      - "${FRONTEND_PORT:-8080}:80"
     depends_on:
       - app
 

@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🧑‍💼 Your First Multi-Agent Project
+# Agents on Duty
 
 _A customer-service system where every design decision can be explained — LangGraph orchestration · compliance repair loop · three-tier memory with graceful degradation_
 
@@ -19,11 +19,11 @@ _A customer-service system where every design decision can be explained — Lang
 
 ## 📖 About this project
 
-This is a complete multi-agent system simulating a real customer-service scenario: the user asks in natural language, a Supervisor classifies the intent, and dispatches to knowledge retrieval (FAISS RAG), business actions (order lookup and ticket creation via MCP tools), or a fallback reply. Every answer passes a "rules + LLM" compliance gate — non-compliant ones are automatically rewritten with the violation reason, and if retries are exhausted the system degrades to a canned response. **Nothing leaves the system without passing that gate.**
+This is a runnable multi-agent customer-service learning project. A Supervisor dispatches requests to knowledge retrieval, order/ticket tools, or fallback. Responses go through rules and LLM compliance checks; failed responses are rewritten up to twice before a fixed fallback. Order data is mocked, and the compliance checks demonstrate the architecture rather than a production policy.
 
-Behind the pipeline sits a full engineering stack: three tiers of memory (chat history / routing context / vector knowledge base) each with a degradation path — Redis failing over to MySQL, MySQL failing over to in-process; plus JWT auth, login rate limiting, PII masking, ticket idempotency, SSE streaming, and OpenTelemetry metrics. The frontend is a complete React shell that shows each agent's progress in real time.
+Chat history and routing context prefer Redis, then MySQL, then in-process storage. The vector knowledge base uses FAISS and DashScope embeddings. JWT auth, login rate limiting, PII detection, ticket idempotency, SSE progress events, and OpenTelemetry metrics are also present.
 
-The project is meant for **learning**: it deliberately stays simple and readable — no file exceeds ~300 lines, and comments explain *why* rather than *what*. But it isn't a toy: the degradation strategy, idempotency design, and compliance gate are patterns used in real production systems. If you're new to multi-agent development, read in the order `agents/supervisor.py` → `memory/` → `api/main.py` — the whole graph fits in 60 lines.
+The project is meant for **learning**. Start with `agents/supervisor.py`, then read `memory/` and `api/main.py`. The order and logistics tools use bundled mock data; the compliance rules and small evaluation sets need further work before production use.
 
 ## 🎯 Why it's worth reading
 
@@ -41,7 +41,7 @@ Most Agent tutorials stop at "the demo runs". This project finishes the problems
 ## 🚀 Quick Start
 
 > [!TIP]
-> One command for the whole stack (MySQL + Redis + backend + frontend). You only need Docker and an LLM API key.
+> You need Docker, an OpenAI-compatible chat model, and a DashScope embedding key. The first start indexes the bundled knowledge-base text.
 
 ```bash
 # 1. Configure the environment
@@ -50,12 +50,13 @@ cd agents-on-duty
 cp .env.example .env
 #    Edit .env — at minimum:
 #    OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME
-#    and MYSQL_PASSWORD (compose initializes MySQL with it)
+#    DASHSCOPE_API_KEY, MYSQL_PASSWORD, and JWT_SECRET_KEY
+#    Set FRONTEND_PORT=8081 if port 8080 is occupied
 
 # 2. Start everything
 docker compose up --build -d
 
-# 3. Open http://localhost:8080, register, and chat ✅
+# 3. Open http://localhost:8080 (or your FRONTEND_PORT), register, and chat
 ```
 
 Try these three questions and watch the agent trace chips under each reply:
@@ -63,8 +64,10 @@ Try these three questions and watch the agent trace chips under each reply:
 | You ask | Who answers | What you see |
 |---|---|---|
 | "How many days after delivery can I return an item?" | 📚 Knowledge RAG | FAISS retrieval → compliance pass |
-| "Track order ORD-20260401-001" | 🎫 Ticket handler | MCP tool call → compliance pass |
+| "Check the status of order 1001" | 🎫 Ticket handler | MCP tool call → compliance check |
 | "Write me a novel" | 💬 Fallback | polite refusal |
+
+The MCP order tool currently returns a fixed mock status for any supplied order ID. Only its local fallback uses the `1001/1002` entries in [`tools/mock_data.py`](tools/mock_data.py); neither path verifies real logistics data.
 
 <details>
 <summary><b>Manual setup without Docker</b></summary>
@@ -173,7 +176,7 @@ Chat streaming is mostly one-directional (server → client). SSE rides plain HT
 <details>
 <summary><b>Why "rules first, LLM second" for compliance?</b></summary>
 <br>
-Regex PII / forbidden-term checks are deterministic: free, false-positive-free, millisecond-fast. The LLM only reviews semantic risks after rules pass. High-risk rule hits short-circuit before any LLM call.
+Local regex checks catch common PII patterns and fixed forbidden terms before an LLM call. They can falsely match ordinary numbers and miss other expressions. The LLM reviews responses that pass those rules.
 <br><br><code>agents/compliance_checker.py → full_check</code>
 </details>
 
@@ -181,23 +184,21 @@ Regex PII / forbidden-term checks are deterministic: free, false-positive-free, 
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest          # 21 passed
+DASHSCOPE_API_KEY=dummy-key-for-ci python -m pytest -q
 ```
 
-**Latest full run: 21 passed / 0 failed (2026-10-25, Python 3.12 · Windows, 37.5s); CI re-runs the suite on every push.**
+Local recheck on 2026-10-25 passed on Python 3.14 / Windows with a dummy embedding key. CI uses Python 3.12. A real DashScope key is required to run chat and create the initial index.
 
 | Module | Cases | What it verifies | Result |
 |---|---|---|---|
 | Compliance repair loop | 3 | Graph-level tests (FakeLLM driving the full LangGraph): pass on first try, degrade after 2 rewrites, pass after one rewrite | ✅ |
 | Ticket idempotency & rate limit | 7 | Semantic key hit/isolation, arg whitelist for LLM extras, working-memory degradation, login 429, AsyncSqliteSaver lifecycle | ✅ |
 | MCP resilience | 3 | Local tools & MCP share the idempotency store, MCP ticket idempotency | ✅ |
-| MySQL fallback & degradation | 4 | Fail-fast self-check, in-process degradation with both backends down, **real MySQL read/write roundtrip** | ✅ |
+| MySQL fallback & degradation | 4 | Fail-fast self-check, in-process degradation; roundtrip when MySQL is reachable | ✅ / conditional |
 | Working memory | 4 | Context read/write, history truncation, session clear, session isolation | ✅ |
 
 > [!NOTE]
-> MySQL cases auto-skip or take the degradation path when no server is reachable, so CI
-> stays green without a real database. With a local MySQL present (as in this run),
-> the roundtrip case performs full read/write verification against the real database.
+> `test_mysql_store_roundtrip` returns when MySQL is unreachable. A green suite alone does not show that a real database roundtrip ran.
 
 <details>
 <summary><b>End-to-end evaluation</b></summary>
