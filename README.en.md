@@ -9,13 +9,21 @@ _A customer-service system where every design decision can be explained — Lang
 [![React](https://img.shields.io/badge/react-19-61dafb)](https://react.dev)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED)](https://docs.docker.com/compose/)
 
-[Quick Start](#-quick-start) · [Architecture](#-architecture) · [Highlights](#-why-its-worth-reading) · [Design FAQ](#-design-decision-faq)
+[About](#-about-this-project) · [Quick Start](#-quick-start) · [Architecture](#-architecture) · [Highlights](#-why-its-worth-reading) · [Design FAQ](#-design-decision-faq)
 
 [简体中文](README.md) | **English**
 
 </div>
 
 ---
+
+## 📖 About this project
+
+This is a complete multi-agent system simulating a real customer-service scenario: the user asks in natural language, a Supervisor classifies the intent, and dispatches to knowledge retrieval (FAISS RAG), business actions (order lookup and ticket creation via MCP tools), or a fallback reply. Every answer passes a "rules + LLM" compliance gate — non-compliant ones are automatically rewritten with the violation reason, and if retries are exhausted the system degrades to a canned response. **Nothing leaves the system without passing that gate.**
+
+Behind the pipeline sits a full engineering stack: three tiers of memory (chat history / routing context / vector knowledge base) each with a degradation path — Redis failing over to MySQL, MySQL failing over to in-process; plus JWT auth, login rate limiting, PII masking, ticket idempotency, SSE streaming, and OpenTelemetry metrics. The frontend is a complete React shell that shows each agent's progress in real time.
+
+The project is meant for **learning**: it deliberately stays simple and readable — no file exceeds ~300 lines, and comments explain *why* rather than *what*. But it isn't a toy: the degradation strategy, idempotency design, and compliance gate are patterns used in real production systems. If you're new to multi-agent development, read in the order `agents/supervisor.py` → `memory/` → `api/main.py` — the whole graph fits in 60 lines.
 
 ## 🎯 Why it's worth reading
 
