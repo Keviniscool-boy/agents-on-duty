@@ -16,6 +16,7 @@ COPY auth ./auth
 COPY mcp_client ./mcp_client
 COPY mcp_tools ./mcp_tools
 COPY memory ./memory
+COPY storage ./storage
 COPY tools ./tools
 COPY tracing ./tracing
 COPY knowledge_base ./knowledge_base
