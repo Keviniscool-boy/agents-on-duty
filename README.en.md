@@ -1,31 +1,81 @@
-# Your First Multi-Agent Project
+<div align="center">
 
-<p align="center">
-  <a href="https://github.com/Keviniscool-boy/agents-on-duty/actions/workflows/ci.yml"><img src="https://github.com/Keviniscool-boy/agents-on-duty/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python">
-  <img src="https://img.shields.io/badge/LangGraph-%E2%9C%93-teal" alt="LangGraph">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
-</p>
+# 🧑‍💼 Your First Multi-Agent Project
 
-<p align="center">
-<a href="README.md">简体中文</a> | English
-</p>
+_A customer-service system where every design decision can be explained — LangGraph orchestration · compliance repair loop · three-tier memory with graceful degradation_
 
-> A smart customer-service system: Supervisor orchestration + compliance repair loop + three-tier memory with graceful degradation · FastAPI + LangGraph + MCP
+[![CI](https://github.com/Keviniscool-boy/agents-on-duty/actions/workflows/ci.yml/badge.svg)](https://github.com/Keviniscool-boy/agents-on-duty/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue)
+![React](https://img.shields.io/badge/react-19-61dafb)
+![Docker](https://img.shields.io/badge/docker-compose-ready-2496ED)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+![Tests](https://img.shields.io/badge/tests-17%20passed-brightgreen)
 
-A customer-service agent system built with **FastAPI + LangGraph**, designed as a **simple, readable, production-minded** first multi-agent project: no clever abstractions — every module maps to an engineering problem you hit in real business: routing, compliance, idempotency, degradation, auth, observability.
+[Quick Start](#-quick-start) · [Architecture](#-architecture) · [Highlights](#-why-its-worth-reading) · [Design FAQ](#-design-decision-faq)
 
-## What it does
+[简体中文](README.md) | **English**
 
-Users ask questions in natural language; the system routes each turn to the right agent:
+</div>
 
-- 📚 **knowledge_rag** — refund policies, onboarding, product FAQ, answered via FAISS vector retrieval
-- 🎫 **ticket_handler** — order/logistics lookup and ticket creation via **MCP** tool calls
-- 🛡️ **compliance_checker** — rule-based + LLM review: PII leaks, profit guarantees, prompt leakage
-- 🔄 **compliance repair loop** — failed answers are **rewritten with the violation reason** (max 2 retries), then degrade to a fallback script
-- 💬 **fallback** — politely refuses off-topic, dangerous, or system-probing requests
+---
 
-## Architecture
+## 🎯 Why it's worth reading
+
+Most Agent tutorials stop at "the demo runs". This project finishes the problems you only meet in real business — **every module maps to an engineering question you'll be asked in production or interviews**:
+
+- 🧭 **Supervisor orchestration** — intent routing with a deterministic fast path: common simple requests are classified by local regex, saving an LLM call entirely
+- 🛡️ **Compliance repair loop** — a non-compliant answer isn't just blocked; it's **rewritten with the violation reason** (≤2 retries), then degrades to a fallback script
+- 🪆 **Three-level degradation** — Redis down → MySQL; MySQL down → in-process; and MySQL itself is a hard dependency whose startup self-check refuses to boot the app — **failure semantics are explicit for every component**
+- 🎫 **Semantic idempotency** — ticket idempotency keys use "user + content fingerprint" instead of request IDs, surviving both network retries and "the user asks again"
+- 🔌 **MCP tool calls** — standard protocol into the order system, bounded retry on network errors + local fallback tools sharing the same idempotency store
+- 📡 **SSE streaming** — `graph.astream(stream_mode="updates")` maps directly onto an event stream; the frontend watches agents work step by step
+- 🔐 **Complete security stack** — JWT auth, PBKDF2 password hashing, login rate limiting, session ownership checks, automatic PII masking
+- 📊 **Observability** — OpenTelemetry tracing + per-agent metrics, with an ops panel built into the frontend
+
+## 🚀 Quick Start
+
+> [!TIP]
+> One command for the whole stack (MySQL + Redis + backend + frontend). You only need Docker and an LLM API key.
+
+```bash
+# 1. Configure the environment
+git clone https://github.com/Keviniscool-boy/agents-on-duty.git
+cd agents-on-duty
+cp .env.example .env
+#    Edit .env — at minimum:
+#    OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME
+#    and MYSQL_PASSWORD (compose initializes MySQL with it)
+
+# 2. Start everything
+docker compose up --build -d
+
+# 3. Open http://localhost:8080, register, and chat ✅
+```
+
+Try these three questions and watch the agent trace chips under each reply:
+
+| You ask | Who answers | What you see |
+|---|---|---|
+| "How many days after delivery can I return an item?" | 📚 Knowledge RAG | FAISS retrieval → compliance pass |
+| "Track order ORD-20260401-001" | 🎫 Ticket handler | MCP tool call → compliance pass |
+| "Write me a novel" | 💬 Fallback | polite refusal |
+
+<details>
+<summary><b>Manual setup without Docker</b></summary>
+
+```bash
+# Backend (Python 3.12+, needs local MySQL and Redis)
+pip install -r requirements-dev.txt
+uvicorn api.main:app --port 8000
+
+# Frontend
+cd frontend && npm install && npm run dev   # http://localhost:5173
+```
+
+See `.env.example` for a per-variable explanation.
+</details>
+
+## 🏗️ Architecture
 
 ```mermaid
 flowchart TD
@@ -46,93 +96,113 @@ flowchart TD
     style C fill:#eef3f8,stroke:#2f5d8a
 ```
 
-## Three-tier memory, three-level degradation
+## 🧠 Three-tier memory, three-level degradation
 
-Every piece of data has a clear owner and a degradation path:
+> [!NOTE]
+> The most instructive part of this project: **every piece of data has an explicit owner and explicit failure semantics**.
 
-| Data | First choice | Fallback | Notes |
+| Data | First choice | Fallback | Lifetime |
 |---|---|---|---|
-| Chat history | Redis (30 min TTL) | MySQL → in-process | includes user_id / session_id |
-| Routing / compliance context | Redis (24 h) | MySQL → in-process | working memory |
-| Users, session ownership | SQLite | — | PBKDF2 hashing + JWT auth |
-| LangGraph checkpoints | AsyncSqliteSaver | in-process | survives restarts |
-| Ticket idempotency | SQLite | — | semantic keys; duplicates return the original ticket |
-| Orders / logistics | **not stored** — queried live via MCP | — | order data stays in the order system |
+| Chat history | Redis (30 min TTL) | MySQL → in-process | short-term |
+| Routing / compliance context | Redis (24 h TTL) | MySQL → in-process | per-session |
+| Users, session ownership | SQLite | — | permanent |
+| LangGraph checkpoints | AsyncSqliteSaver | in-process | permanent, survives restarts |
+| Ticket idempotency | SQLite | — | permanent |
+| Orders / logistics | **not stored** — queried live via MCP | — | lives in the order system |
 
-- **MySQL is a hard dependency**: startup self-check fails → the app refuses to boot
-- **Redis going down only makes it slower**: automatic degradation to MySQL, no downtime
-- Everything persisted to MySQL carries `user_id` for auditability
+- MySQL is the system of record → **hard dependency**; startup self-check fails → the app refuses to boot
+- Redis is a hot cache → going down **only makes it slower**, no downtime
+- Everything persisted to MySQL carries `user_id` / `session_id` for auditability
 
-## Quick start
-
-```bash
-# 1. Configure environment
-cp .env.example .env
-#    At minimum: OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME
-#    and MYSQL_PASSWORD (docker compose initializes MySQL with it)
-
-# 2. One command for the whole stack (MySQL + Redis + backend + frontend)
-docker compose up --build
-
-# 3. Open http://localhost:8080, register an account, start chatting
-```
-
-For manual deployment see [Dockerfile](Dockerfile) and the comments in `.env.example`.
-
-## Project layout
+## 🗂️ Project layout
 
 ```
-agents/          5 agents: supervisor routing, knowledge_rag, ticket_handler,
-                 compliance_checker, synthesizer + the rewrite node
-api/             FastAPI: /api/chat, /api/chat/stream (SSE), /api/auth/*, /api/tools, /api/metrics
-memory/          three-tier memory: short_term, working_memory, long_term (FAISS)
-storage/         MySQL fallback store (working context / history / messages)
-mcp_client/      MCP client with network retry and local fallback
+agents/          5 agents + the rewrite node
+api/             FastAPI: sync chat, SSE streaming, JWT auth, tools & metrics
+memory/          short_term (chat) / working_memory (routing state) / long_term (FAISS)
+storage/         MySQL fallback store
+mcp_client/      MCP client: retry + local fallback
 mcp_tools/       MCP server: order_query / ticket_create / risk_check
-tools/           local fallback tools + ticket idempotency store (SQLite)
-auth/            JWT signing + SQLite user database
-tracing/         OpenTelemetry setup + per-agent metrics
-frontend/        React + Vite: sessions, live SSE progress, agent trace chips, ops panel
-evaluation/      8 evaluation scripts: routing / RAG / compliance / MCP / memory / auth + locust
+tools/           local fallback tools + ticket idempotency store
+auth/            JWT + SQLite user database
+tracing/         OpenTelemetry + agent metrics
+frontend/        React + Vite: sessions, live progress, trace chips, ops panel
+evaluation/      8 end-to-end evaluation scripts + locust load tests
 ```
 
-## Design decision FAQ
+## ❓ Design decision FAQ
 
-**Q: Why is the ticket idempotency key a content fingerprint (user + title + description hash) instead of a request ID?**
-A request ID changes on every tool call — it survives network retries but not "the user asks again". A content fingerprint returns the original ticket ID on duplicate submission, which in customer service is better UX anyway. See `build_idempotency_key` in `agents/ticket_handler.py`.
+<details open>
+<summary><b>Why is the ticket idempotency key a content fingerprint instead of a request ID?</b></summary>
+<br>
+A request ID changes on every tool call — it survives network retries but not "the user asks again". A content fingerprint returns the original ticket ID on duplicates, which in customer service is better UX anyway. Same-content tickets are accepted only once — a deliberate trade-off.
+<br><br><code>agents/ticket_handler.py → build_idempotency_key</code>
+</details>
 
-**Q: Why is MySQL a hard dependency while Redis is allowed to fail?**
-Redis is a hot cache; when it dies we degrade to MySQL and just get slower. MySQL is the system of record — if it's gone there is nowhere to land any context, so fail fast at startup.
+<details>
+<summary><b>Why is MySQL a hard dependency while Redis may fail?</b></summary>
+<br>
+Different roles: Redis is a hot cache — when it dies we degrade to MySQL and just get slower. MySQL is the system of record — if it's gone, no context can land anywhere, so fail fast instead of running degraded.
+<br><br><code>storage/mysql_store.py → self_check</code>
+</details>
 
-**Q: Why must the LangGraph checkpointer be AsyncSqliteSaver?**
-A real bug we hit: every API goes through `ainvoke`/`astream`, and the sync `SqliteSaver` raises `NotImplementedError` on async methods — the graph compiles fine, then the first chat crashes. Lesson: **a graph that compiles is not a graph that runs**; test at the graph level (see `test_compliance_loop.py`).
+<details>
+<summary><b>Why must the LangGraph checkpointer be AsyncSqliteSaver?</b></summary>
+<br>
+A real bug we hit: every API goes through <code>ainvoke</code>/<code>astream</code>, and the sync SqliteSaver raises <code>NotImplementedError</code> on async methods — the graph compiles fine, then the first chat crashes. Lesson: <b>a graph that compiles is not a graph that runs</b>. Test at the graph level (see <code>test_compliance_loop.py</code>).
+</details>
 
-**Q: Why aren't orders persisted in this system?**
+<details>
+<summary><b>Why aren't orders persisted in this system?</b></summary>
+<br>
 The CS system is a pass-through: query via MCP, put the result in the answer, drop it. The order system is the single source of truth; caching orders here only creates consistency problems.
+</details>
 
-**Q: Why SSE instead of WebSocket for streaming?**
-Chat streaming is one-directional (server → client events). SSE rides plain HTTP, reconnects automatically, and `graph.astream(stream_mode="updates")` is already an event generator — a perfect match.
+<details>
+<summary><b>Why SSE instead of WebSocket for streaming?</b></summary>
+<br>
+Chat streaming is mostly one-directional (server → client). SSE rides plain HTTP and reconnects automatically, and <code>graph.astream(stream_mode="updates")</code> is already an event generator — a perfect match.
+</details>
 
-**Q: Why "rules first, LLM second" for compliance?**
-Regex PII / forbidden-term checks are deterministic: free, false-positive-free, millisecond-fast. The LLM only reviews semantic risks after rules pass. High-risk rule hits short-circuit before any LLM call. See `full_check` in `agents/compliance_checker.py`.
+<details>
+<summary><b>Why "rules first, LLM second" for compliance?</b></summary>
+<br>
+Regex PII / forbidden-term checks are deterministic: free, false-positive-free, millisecond-fast. The LLM only reviews semantic risks after rules pass. High-risk rule hits short-circuit before any LLM call.
+<br><br><code>agents/compliance_checker.py → full_check</code>
+</details>
 
-## Testing
+## ✅ Testing
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest
+python -m pytest          # 17 passed
 ```
 
-17 tests cover the compliance loop (graph-level, FakeLLM-driven), ticket idempotency,
-memory degradation chains, login rate limiting, and MySQL storage. MySQL-dependent cases
-auto-skip when no server is reachable. `evaluation/` contains end-to-end scripts that
-run against a live service.
+Covers the compliance loop (graph-level, FakeLLM-driven), ticket idempotency, memory
+degradation chains, login rate limiting, and MySQL storage; MySQL-dependent cases
+auto-skip when no server is reachable. CI runs the full suite on every push.
 
-## Tech stack
+<details>
+<summary><b>End-to-end evaluation</b></summary>
 
-Python 3.12 · FastAPI · LangGraph · LangChain · MCP · MySQL · Redis · SQLite ·
-FAISS · React · Vite · JWT · OpenTelemetry · Docker Compose
+The 8 scripts in `evaluation/` run against a live service: routing accuracy, RAG quality,
+compliance interception, MCP resilience, memory consistency, auth security, plus locust
+load tests. See each script's header for usage.
+</details>
 
-## License
+## 🛠️ Tech stack
 
-[MIT](LICENSE)
+| Layer | Tech |
+|---|---|
+| Orchestration | LangGraph · LangChain |
+| Service | FastAPI · Uvicorn · SSE |
+| Tool protocol | MCP (Model Context Protocol) |
+| Storage | MySQL 8 · Redis · SQLite · FAISS |
+| Frontend | React 19 · Vite · native SSE |
+| Observability | OpenTelemetry · custom agent metrics |
+| Quality | Pytest · GitHub Actions · Locust |
+| Deployment | Docker Compose · Nginx |
+
+## 📄 License
+
+[MIT](LICENSE) © 2026
