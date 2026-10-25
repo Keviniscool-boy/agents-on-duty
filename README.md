@@ -203,6 +203,7 @@ DASHSCOPE_API_KEY=dummy-key-for-ci python -m pytest -q
 | MCP 弹性 | 3 | 本地工具与 MCP 共享幂等存储、MCP 建单幂等 | ✅ |
 | MySQL 兜底与降级链 | 4 | 自检快速失败、双挂时进程内降级；MySQL 可达时做读写往返 | ✅ / 条件执行 |
 | 工作记忆 | 4 | 上下文读写、历史截断、会话清理、会话隔离 | ✅ |
+| Embedding 提供商 | 5 | DashScope/OpenAI 兼容双路径选择、索引身份不一致自动重建、旧格式元数据兼容 | ✅ |
 
 > [!NOTE]
 > `test_mysql_store_roundtrip` 在 MySQL 不可达时直接返回，因此全绿不代表真实数据库往返已执行。本机复核打印了 `SKIP test_mysql_store_roundtrip (no MySQL reachable)`。

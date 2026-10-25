@@ -196,6 +196,7 @@ Local recheck on 2026-10-25 passed on Python 3.14 / Windows with a dummy embeddi
 | MCP resilience | 3 | Local tools & MCP share the idempotency store, MCP ticket idempotency | ✅ |
 | MySQL fallback & degradation | 4 | Fail-fast self-check, in-process degradation; roundtrip when MySQL is reachable | ✅ / conditional |
 | Working memory | 4 | Context read/write, history truncation, session clear, session isolation | ✅ |
+| Embedding provider | 5 | Dual-path selection (DashScope / OpenAI-compatible), auto index rebuild on identity mismatch, legacy metadata compat | ✅ |
 
 > [!NOTE]
 > `test_mysql_store_roundtrip` returns when MySQL is unreachable. A green suite alone does not show that a real database roundtrip ran.
