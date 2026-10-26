@@ -19,7 +19,7 @@ jobs:
         ports:
           - "3306:3306"
         options: >-
-          --health-cmd="mysqladmin ping -h localhost -proot_password"
+          --health-cmd="mysqladmin ping -h localhost -pci_root_password"
           --health-interval=5s
           --health-timeout=3s
           --health-retries=20
