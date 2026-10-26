@@ -10,8 +10,9 @@
   封顶 30s）重新探测，绝不永久放弃；恢复时打 INFO 日志（A4/A8）。
 - 降级/回切全程打日志并上报 metrics 计数（A8/B13）。
 
-并发约束（A6/A7）：同一会话按"单写者"设计；进程内副本是每进程的，
-多 worker 部署时各副本视图可能分裂，依赖 Redis/MySQL 层保证一致性。
+并发约束（A6/A7）：MySQL 路径通过事务 + 行锁原子合并，多 worker
+并发写同一会话不丢更新；进程内副本仍是每进程的（仅作读取回退链
+的最后一环），一致性以 Redis/MySQL 层为准。
 """
 
 import logging
@@ -144,10 +145,14 @@ class WorkingMemory:
             _record_degradation("redis", "mysql")
             return False
 
-    def _write_mysql(self, session_id: str, user_id: str, merged: dict[str, Any], entry: dict[str, Any]) -> bool:
-        """写 MySQL 一层；任何异常（含 SQL 执行错误）都算该层失败（A1/A2）。"""
+    def _write_mysql(self, session_id: str, user_id: str, data: dict[str, Any], entry: dict[str, Any]) -> bool:
+        """写 MySQL 一层；任何异常（含 SQL 执行错误）都算该层失败（A1/A2）。
+
+        A6/A7：上下文合并通过 merge_working_context 在行锁内原子完成，
+        多 worker 并发写同一会话不再丢更新。
+        """
         try:
-            mysql_store.save_working_context(session_id, user_id, merged)
+            mysql_store.merge_working_context(session_id, user_id, data)
             mysql_store.append_working_history(
                 session_id, user_id, entry, self._max_entries
             )
@@ -186,23 +191,9 @@ class WorkingMemory:
             if not redis_ok:
                 client = None
 
-        # MySQL 是整体覆盖存储，写入前需要合并基。Redis 写成功时直接用
-        # 本地视图做合并基（单写者约束下与 MySQL 等价，省一次读往返）；
-        # Redis 失败时才读 MySQL 补全，防止覆盖丢失其它层已有的字段。
-        if redis_ok:
-            with self._lock:
-                base = dict(self._context.get(session_id, {}))
-            merged = {**base, **data}
-            mysql_ok = self._write_mysql(session_id, user_id, merged, entry)
-        else:
-            try:
-                base = mysql_store.load_working_context(session_id)
-                merged = {**base, **data}
-                mysql_ok = self._write_mysql(session_id, user_id, merged, entry)
-            except (MySQLUnavailableError, pymysql.MySQLError) as exc:
-                mysql_ok = False
-                _record_degradation("mysql", "in-process")
-                logger.warning("MySQL 读取失败，仅合并本地视图：%s", exc)
+        # A6/A7：MySQL 合并在行锁内原子完成（merge_working_context），
+        # 无需调用方维护合并基，也不再有单写者约束。
+        mysql_ok = self._write_mysql(session_id, user_id, data, entry)
 
         if not redis_ok and not mysql_ok:
             _record_degradation("all", "in-process")

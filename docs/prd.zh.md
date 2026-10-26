@@ -129,7 +129,8 @@
 
 | 功能模块 | 需求（优先级） | 用户价值 | 当前状态 | 主要实现位置 |
 |---|---|---|---|---|
-| 用户注册与登录 | P0 | 使用系统的身份基础 | 已实现 | `api/main.py:register/login`、`auth/database.py`（PBKDF2） |
+| 用户注册与登录 | P0 | 使用系统的身份基础 | 已实现（token 以 httpOnly Cookie 下发，另支持 Bearer 供脚本使用） | `api/main.py:register/login/logout`、`auth/database.py`（PBKDF2） |
+| CSRF 防护 | P1 | SameSite 之外的跨站写请求防御 | 已实现（Origin 白名单校验，非浏览器客户端放行） | `api/main.py → csrf_origin_check` |
 | JWT 鉴权 | P0 | 无凭据不能调用业务接口 | 已实现（密钥缺失拒绝启动，B1 加固） | `auth/security.py`、`api/main.py → lifespan` |
 | 会话创建/切换/列表 | P0 | 多轮独立对话 | 已实现 | `api/main.py`、`frontend/src/ChatView.jsx` |
 | 会话归属校验 | P0 | 用户不能读他人会话 | 已实现 | `api/main.py → user_owns_session`（403） |
@@ -212,6 +213,7 @@ flowchart TD
 | 对话历史 | Redis（30 min TTL） | MySQL → 进程内 | 短期 | Redis 挂：读写走 MySQL，变慢不丢数据 |
 | 路由/合规上下文（工作记忆） | Redis（24 h TTL） | MySQL → 进程内 | 会话级 | 同上；进程内副本保证恢复后仍可读 |
 | 用户账户 | SQLite（`auth/database.py`） | 无 | 永久 | SQLite 不可用则鉴权失败（单机文件，风险低） |
+| 登录态（JWT Cookie） | httpOnly Cookie | Bearer 头回退 | 随 JWT 过期 | 前端登出调用 `/api/auth/logout` 清除 |
 | 会话归属 | SQLite（`user_owns_session`） | 无 | 永久 | 同上 |
 | LangGraph checkpoint | AsyncSqliteSaver | 进程内 MemorySaver | 永久，重启可恢复 | SQLite 不可用时降级内存，重启丢断点 |
 | 工单幂等记录 | SQLite（`tools/ticket_store.py`） | 无 | 永久 | 不可用则建单失败（正确行为：不能放弃幂等） |
@@ -286,6 +288,7 @@ MCP 工具的 mock 级别明细（`mcp_tools/order_server.py`）：
 ### 安全性
 
 - JWT（HS256）+ 密钥必填：缺失或历史默认值拒绝签发/校验，启动自检失败拒绝启动（`auth/security.py → require_jwt_secret`，B1）。
+- Token 以 httpOnly + SameSite=Strict Cookie 下发，前端不再使用 localStorage；CSRF 防护 = SameSite + Origin 白名单校验（`api/main.py → csrf_origin_check`，B10）。
 - 密码 PBKDF2-HMAC-SHA256（12 万轮）+ 随机盐 + 常数时间比较（`auth/database.py → hash_password`）。
 - 登录限流：同 IP+用户名 60s/5 次，Redis 计数优先、进程内兜底（`api/main.py → _check_login_rate_limit`）。
 - 会话归属校验：跨用户读会话 403（`api/main.py`）。
@@ -298,6 +301,7 @@ MCP 工具的 mock 级别明细（`mcp_tools/order_server.py`）：
 
 - MCP：Timeout/ConnectionError 退避重试（1s/2s）→ 本地工具降级（共享幂等存储）。
 - 存储：写扇出 + 读回退链（Redis → MySQL → 进程内）；Redis 回切；SQL 执行期异常入兜底不再 500；连接失败退避重试 + 熔断冷却（`storage/mysql_store.py`）。
+- 多副本一致性：工作记忆合并为事务 + 行锁原子操作，并带 gap-lock 死锁退避重试（A6/A7 已支持，含真实 MySQL 并发测试）。
 - 合规：重写环 ≤2 次 → 降级话术。
 - MySQL 启动自检失败拒绝启动（fail-fast 而非带病运行）。
 
@@ -367,7 +371,7 @@ MCP 工具的 mock 级别明细（`mcp_tools/order_server.py`）：
 6. **进程内存储不跨进程、重启即失**：多 worker 部署时工作记忆副本分裂、限流计数不共享、指标清零（代码 docstring 与 README 已声明）。
 7. **部分故障场景依赖测试替身**：降级/回切/死锁注入由 monkeypatch 驱动（`test_fallback_resilience.py`、`verify_fallback.py`），真实锁等待/中断时序未在集成环境复现。
 8. **无生产级权限、审计与运营体系**：无角色/多租户/审批/审计日志/工单运营。
-9. **前端 token 在 localStorage**：XSS 面用 CSP 缓解，未改 httpOnly Cookie（已知取舍）。
+9. ~~前端 token 在 localStorage~~（已迁移 httpOnly Cookie，CSP 保留为纵深防御）。
 10. **性能与容量未定义**：无压测基线结论（locust 脚本在但结果未入库）。
 
 ## 16. 产品假设与待确认问题
@@ -404,7 +408,7 @@ MCP 工具的 mock 级别明细（`mcp_tools/order_server.py`）：
 2. **扩充评测数据集**：路由/RAG/合规样本各扩到 50+ 条，覆盖边界 case（正则误伤、变相承诺）。
 3. **知识库管理 API**：文档 CRUD + 切片预览 + 增量更新与删除。当前 FAISS 使用 `IndexFlatIP`（不支持删除）；增量方案（例如基于 ID 映射的索引结构）为候选设计，**仓库中未实现也未验证**。
 4. **成本与延迟监控**：AgentMetrics 已有调用量/耗时，补 token 用量与按请求成本归集。
-5. **前端 httpOnly Cookie 或等价加固**：彻底关闭 localStorage XSS 面。
+5. ~~前端 httpOnly Cookie~~（已实现，2026-10-26：token 迁移 httpOnly Cookie + Origin 校验，localStorage 已移除）。
 
 ### P2：向真实业务系统演进
 

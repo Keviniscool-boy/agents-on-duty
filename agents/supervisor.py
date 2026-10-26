@@ -97,6 +97,13 @@ class SupervisorNode:
     async def route_decision(self, state: AgentState) -> dict[str, str]:
         session_id = state["session_id"]
         context = self.working_memory.get_context(session_id)
+        # R2：空消息列表防御——直接走 fallback，不调 LLM。
+        if not state.get("messages"):
+            return {
+                "intent": "fallback",
+                "current_agent": "fallback",
+                "final_response": "",
+            }
         user_message = state["messages"][-1].content
 
         deterministic_intent = self._deterministic_intent(user_message)

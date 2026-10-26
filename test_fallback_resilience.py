@@ -93,6 +93,14 @@ class FakeMySQLStore:
         self._fail()
         return dict(self.contexts.get(session_id, {}))
 
+    def merge_working_context(self, session_id, user_id, data):
+        # A6/A7：update 改用原子合并接口，替身同步支持。
+        self.calls.append("merge_working_context")
+        self._fail()
+        merged = {**self.contexts.get(session_id, {}), **data}
+        self.contexts[session_id] = merged
+        return merged
+
     def save_working_context(self, session_id, user_id, context):
         self.calls.append("save_working_context")
         self._fail()
@@ -146,9 +154,9 @@ def test_a1_write_through_reaches_mysql_when_redis_up(fake_mysql, fake_redis_ok)
     memory = wm_mod.WorkingMemory(redis_url="redis://fake:6379/0")
     memory.update("sess", {"last_intent": "ticket_handler"}, user_id="u1")
 
-    assert any(c.startswith("save") for c in fake_mysql.calls), (
-        f"MySQL 应收到扇出写入，实际调用={fake_mysql.calls}"
-    )
+    assert any(
+        c.startswith(("save", "merge")) for c in fake_mysql.calls
+    ), f"MySQL 应收到扇出写入，实际调用={fake_mysql.calls}"
 
 
 def test_a1_redis_down_still_reads_data(fake_mysql, fake_redis_ok, monkeypatch):

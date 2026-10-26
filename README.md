@@ -38,7 +38,7 @@ _可运行的 LangGraph 客服系统：从意图路由、RAG / MCP 工具到合�
 - 🎫 **语义化幂等** —— 工单幂等键用「用户 + 内容指纹」而非请求 ID，防得住网络重试，也防得住"用户再说一遍"
 - 🔌 **MCP 工具调用** —— stdio MCP Server 提供模拟订单数据；调用失败有限重试，再走本地工具，工单共用 SQLite 幂等记录
 - 📡 **SSE 实时流式** —— `graph.astream(stream_mode="updates")` 直接映射为事件流，前端能看到 Agent 一步一步干活
-- 🔐 **基础安全控制** —— JWT 鉴权、PBKDF2 密码哈希、登录限流、会话归属校验、基于正则的 PII 检测与脱敏
+- 🔐 **基础安全控制** —— JWT 鉴权（httpOnly Cookie 下发 + CSRF Origin 校验）、PBKDF2 密码哈希、登录限流、会话归属校验、基于正则的 PII 检测与脱敏
 - 📊 **可观测性** —— OpenTelemetry 追踪 + 每个 Agent 的调用指标，前端自带运维面板
 
 ## 🚀 快速开始
@@ -130,11 +130,11 @@ flowchart TD
 - Redis 是热缓存 → 运行中不可达时尝试 MySQL，再退进程内；内存兜底不跨进程或重启
 - 所有落 MySQL 的上下文都带 `user_id` / `session_id`，可审计
 
-#### 并发与多副本约束（A6/A7）
+#### 并发与多副本（A6/A7，已支持）
 
-- **同一会话按单写者设计**：MySQL 上下文为整体覆盖写，跨进程的读-改-写不原子——多 worker 同时更新**同一会话**可能丢更新（`storage/mysql_store.py` 模块 docstring 同此声明）。
-- **进程内副本按进程隔离**：工作记忆/短期记忆的"最后一环"是每进程字典，多 worker 部署时各副本视图分裂，一致性依赖 Redis/MySQL 层。
-- **部署建议**：多 worker 部署必须配置 Redis（工作记忆与登录限流计数共享）；当前 compose 默认单 worker，无此问题。
+- **MySQL 路径原子合并**：上下文更新经 `merge_working_context` 在事务 + `SELECT ... FOR UPDATE` 行锁内完成，多 worker 并发写同一会话的不同字段不丢更新（含 gap-lock 死锁退避重试，`storage/mysql_store.py`）。
+- **进程内副本仍按进程隔离**：它只是读取回退链的最后一环，一致性以 Redis/MySQL 层为准。
+- **部署建议**：多 worker 部署配置 Redis 以共享缓存与登录限流计数；当前 compose 默认单 worker。
 - 登录限流的 Redis 计数与进程内兜底计数互不相通，Redis 恢复后进程内计数视为清零。
 
 ## 🗂️ 项目结构

@@ -12,8 +12,9 @@ MySQL 连不上则拒绝启动。
   指数退避重试（A10）。
 - save_working_context 为**整体覆盖**语义，调用方负责先读后合并；
   不用 JSON_MERGE_PATCH，避免 null 值静默删键（A5）。
-- 跨进程的读-改-写不原子（A6）：本层按"同一会话单写者"约束设计，
-  多 worker 并发更新同一会话可能丢更新，见 README 已知限制（A7）。
+- 跨进程的读-改-写通过 merge_working_context 原子完成
+  （事务 + SELECT ... FOR UPDATE，A6/A7）：并发写同一会话的不同
+  字段不会相互覆盖，无单写者约束。
 """
 
 from __future__ import annotations
@@ -36,6 +37,11 @@ class MySQLUnavailableError(RuntimeError):
 # 连接重试（A10）：瞬时故障退避后重试，减少请求级 MySQL 副本丢失。
 _CONNECT_ATTEMPTS = 2
 _CONNECT_BACKOFF_SECONDS = (0.1,)
+# 合并写死锁重试（A6/A7）：行不存在时的 gap-lock 死锁是预期内的
+# 瞬时冲突，MySQL 官方建议重试。
+_LOCK_RETRYABLE_ERRORS = {1213, 1205}
+_MERGE_RETRY_ATTEMPTS = 3
+_MERGE_RETRY_BACKOFF = (0.1, 0.2)
 # 熔断冷却（A10 的代价控制）：连接失败后 2 秒内的调用快速失败，
 # 避免持续宕机时每个操作都重复支付重试成本。
 _CONNECT_COOLDOWN_SECONDS = 2.0
@@ -220,6 +226,105 @@ class MySQLStore:
                     self._now(),
                 ),
             )
+
+    def merge_working_context(
+        self,
+        session_id: str,
+        user_id: str,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """原子读-改-写（A6/A7）：事务 + SELECT ... FOR UPDATE。
+
+        在行锁保护下读取基线、合并写入并提交——并发写同一会话的
+        不同字段不会相互覆盖（丢失更新），移除"同会话单写者"约束。
+        合并语义与调用方（working_memory.update）一致：dict 级
+        键覆盖，键与键之间互不影响。
+
+        并发首次写入同一会话时，行不存在会触发 InnoDB gap-lock
+        死锁（错误码 1213/1205）——按 MySQL 官方建议做退避重试，
+        重试耗尽才转为 MySQLUnavailableError 交由调用方降级。
+        """
+        last_exc: Exception | None = None
+        for attempt in range(_MERGE_RETRY_ATTEMPTS):
+            try:
+                return self._merge_working_context_once(session_id, user_id, data)
+            except pymysql.err.OperationalError as exc:
+                if exc.args and exc.args[0] in _LOCK_RETRYABLE_ERRORS:
+                    last_exc = exc
+                    time.sleep(_MERGE_RETRY_BACKOFF[min(attempt, len(_MERGE_RETRY_BACKOFF) - 1)])
+                else:
+                    self._conn = None
+                    raise MySQLUnavailableError(f"MySQL merge failed: {exc}") from exc
+            except Exception as exc:
+                self._conn = None
+                raise MySQLUnavailableError(f"MySQL merge failed: {exc}") from exc
+        self._conn = None
+        raise MySQLUnavailableError(
+            f"MySQL merge failed after {_MERGE_RETRY_ATTEMPTS} attempts: {last_exc}"
+        ) from last_exc
+
+    def _merge_working_context_once(
+        self,
+        session_id: str,
+        user_id: str,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        with self._lock:
+            try:
+                conn = self._get_conn()
+            except MySQLUnavailableError:
+                raise
+            try:
+                conn.begin()
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT context_json FROM working_memory_context "
+                        "WHERE session_id = %s FOR UPDATE",
+                        (session_id,),
+                    )
+                    row = cursor.fetchone()
+                    base = json.loads(row[0]) if row else {}
+                    merged = {**base, **data}
+                    cursor.execute(
+                        """
+                        INSERT INTO working_memory_context
+                            (session_id, user_id, context_json, updated_at)
+                        VALUES (%s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                            user_id = VALUES(user_id),
+                            context_json = VALUES(context_json),
+                            updated_at = VALUES(updated_at)
+                        """,
+                        (
+                            session_id,
+                            user_id,
+                            json.dumps(merged, ensure_ascii=False),
+                            self._now(),
+                        ),
+                    )
+                conn.commit()
+                return merged
+            except pymysql.err.OperationalError as exc:
+                if exc.args and exc.args[0] in _LOCK_RETRYABLE_ERRORS:
+                    # 死锁/锁超时：回滚并交给上层重试，连接仍可用。
+                    try:
+                        conn.rollback()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    raise
+                try:
+                    conn.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+                self._conn = None
+                raise MySQLUnavailableError(f"MySQL merge failed: {exc}") from exc
+            except Exception as exc:
+                try:
+                    conn.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+                self._conn = None
+                raise MySQLUnavailableError(f"MySQL merge failed: {exc}") from exc
 
     def load_working_context(self, session_id: str) -> dict[str, Any]:
         with self._cursor() as cursor:

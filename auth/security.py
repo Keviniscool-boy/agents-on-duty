@@ -2,12 +2,33 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 
 JWT_ALGORITHM = "HS256"
 bearer_scheme = HTTPBearer(auto_error=False)
+# B10：token 同时以 httpOnly Cookie 下发（前端不再用 localStorage）。
+# SameSite=Strict 抵御 CSRF；secure 由 COOKIE_SECURE 控制（本地 http
+# 环境为 false，生产 https 必须置 true）。
+COOKIE_NAME = "agent_token"
+
+
+def set_auth_cookie(response, token: str) -> None:
+    max_age = int(os.getenv("JWT_EXPIRE_MINUTES", "1440")) * 60
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        max_age=max_age,
+        httponly=True,
+        samesite="strict",
+        secure=os.getenv("COOKIE_SECURE", "false").lower() == "true",
+        path="/",
+    )
+
+
+def clear_auth_cookie(response) -> None:
+    response.delete_cookie(key=COOKIE_NAME, path="/")
 
 # 历史版本的默认密钥：即使被写入环境也视为未配置（B1）。
 _DEPRECATED_DEFAULT_SECRET = "change-this-development-secret"
@@ -43,9 +64,15 @@ def create_access_token(user_id: str, username: str) -> str:
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> dict:
-    if credentials is None or credentials.scheme.lower() != "bearer":
+    # B10：优先 httpOnly Cookie，回退 Bearer 头（评测脚本/CLI 兼容）。
+    if credentials is not None and credentials.scheme.lower() == "bearer":
+        token = credentials.credentials
+    else:
+        token = request.cookies.get(COOKIE_NAME)
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
@@ -53,7 +80,7 @@ def get_current_user(
 
     try:
         payload = jwt.decode(
-            credentials.credentials,
+            token,
             require_jwt_secret(),
             algorithms=[JWT_ALGORITHM],
         )

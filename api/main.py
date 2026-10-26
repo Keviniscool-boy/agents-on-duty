@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi import Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
@@ -31,7 +31,13 @@ from auth.database import (
     user_owns_session,
     verify_password,
 )
-from auth.security import assert_jwt_configured, create_access_token, get_current_user
+from auth.security import (
+    assert_jwt_configured,
+    clear_auth_cookie,
+    create_access_token,
+    get_current_user,
+    set_auth_cookie,
+)
 from mcp_client.client import MCPClient
 from mcp_tools.order_server import server as mcp_server
 from memory.long_term import LongTermMemory
@@ -122,10 +128,29 @@ _CORS_ORIGINS = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_CORS_ORIGINS_SET = {origin.rstrip("/") for origin in _CORS_ORIGINS}
+
+
+@app.middleware("http")
+async def csrf_origin_check(request, call_next):
+    """B10 CSRF 纵深防御：SameSite=Strict 之外校验 Origin。
+
+    浏览器跨站请求会带 Origin；非浏览器客户端（curl/评测脚本）
+    不带 Origin，直接放行，由 JWT 鉴权兜底。
+    """
+    if request.method in {"POST", "PUT", "DELETE", "PATCH"}:
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") not in _CORS_ORIGINS_SET:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Origin not allowed"},
+            )
+    return await call_next(request)
 
 
 class ToolCallRequest(BaseModel):
@@ -468,7 +493,7 @@ async def get_agent_metrics(current_user: dict = Depends(get_current_user)):
 
 
 @app.post("/api/auth/register", response_model=AuthResponse, status_code=201)
-async def register(request: AuthRequest):
+async def register(request: AuthRequest, response: Response):
     username = request.username.strip()
     if len(username) < 3 or len(request.password) < 6:
         raise HTTPException(
@@ -484,11 +509,19 @@ async def register(request: AuthRequest):
         raise HTTPException(status_code=409, detail="Username already exists") from exc
 
     token = create_access_token(user["id"], user["username"])
+    set_auth_cookie(response, token)
     return AuthResponse(access_token=token, user=user)
 
 
+@app.post("/api/auth/logout")
+async def logout(response: Response):
+    """B10：登出即清除 httpOnly Cookie。"""
+    clear_auth_cookie(response)
+    return {"detail": "logged out"}
+
+
 @app.post("/api/auth/login", response_model=AuthResponse)
-async def login(request: AuthRequest, http_request: Request):
+async def login(request: AuthRequest, http_request: Request, response: Response):
     _check_login_rate_limit(http_request.client.host, request.username.strip())
     row = get_user_by_username(request.username.strip())
     if row is None or not verify_password(request.password, row["password_hash"]):
@@ -503,6 +536,7 @@ async def login(request: AuthRequest, http_request: Request):
         "created_at": row["created_at"],
     }
     token = create_access_token(user["id"], user["username"])
+    set_auth_cookie(response, token)
     return AuthResponse(access_token=token, user=user)
 
 

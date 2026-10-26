@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { API_URL, api, clearToken, getToken, INTENT_CLASS, INTENT_LABELS } from "./api.js";
+import { API_URL, api, logout, INTENT_CLASS, INTENT_LABELS } from "./api.js";
 
 function formatMeta(value, fallback = "—") {
   if (value === null || value === undefined || value === "") return fallback;
@@ -188,15 +188,12 @@ export default function ChatView({ user, onLogout }) {
       // 优先走 SSE 流式端点，实时展示 Agent 处理阶段。
       const response = await fetch(`${API_URL}/api/chat/stream`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
-        },
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, session_id: sessionId }),
       });
       if (response.status === 401) {
-        // B11：SSE 通道与 api() 保持一致的过期处理——清 token 并广播登出。
-        clearToken();
+        // B11：SSE 通道与 api() 保持一致的过期处理——广播登出。
         window.dispatchEvent(new Event("auth-expired"));
         throw new Error("登录已过期，请重新登录");
       }
@@ -280,7 +277,13 @@ export default function ChatView({ user, onLogout }) {
           </button>
           <span className="user-badge">{user.username[0].toUpperCase()}</span>
           <span>{user.username}</span>
-          <button className="text-button inverse" onClick={onLogout}>
+          <button
+            className="text-button inverse"
+            onClick={async () => {
+              await logout();
+              onLogout();
+            }}
+          >
             退出登录
           </button>
         </div>

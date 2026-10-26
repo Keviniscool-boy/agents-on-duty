@@ -123,11 +123,11 @@ flowchart TD
 - Redis is a hot cache → going down **only makes it slower**, no downtime
 - Everything persisted to MySQL carries `user_id` / `session_id` for auditability
 
-#### Concurrency & multi-replica constraints (A6/A7)
+#### Concurrency & multi-replica (A6/A7, supported)
 
-- **Single writer per session**: the MySQL context row is a full overwrite; cross-process read-modify-write is not atomic — multiple workers updating the *same session* concurrently may lose updates (also declared in the `storage/mysql_store.py` module docstring).
-- **In-process fallback is per-process**: the last tier of working/short-term memory is a per-process dict; replicas diverge under multi-worker deployments — consistency relies on the Redis/MySQL tiers.
-- **Deployment note**: multi-worker deployments must configure Redis (shared working memory and login rate-limit counters); the default compose setup runs a single worker and is unaffected.
+- **Atomic merge on the MySQL path**: context updates go through `merge_working_context` inside a transaction with `SELECT ... FOR UPDATE` row locks — concurrent workers updating different fields of the same session no longer lose updates (including gap-lock deadlock backoff, `storage/mysql_store.py`).
+- **In-process fallback stays per-process**: it is only the last link of the read fallback chain; consistency comes from the Redis/MySQL tiers.
+- **Deployment note**: configure Redis for multi-worker deployments to share cache and rate-limit counters; the default compose setup is single-worker.
 - Redis and in-process rate-limit counters are independent; after Redis recovers, in-process counters are treated as reset.
 
 ## 🗂️ Project layout

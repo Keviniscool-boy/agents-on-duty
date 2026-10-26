@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, setToken } from "./api.js";
+import { api } from "./api.js";
 
 export default function AuthView({ onLogin }) {
   const [registerMode, setRegisterMode] = useState(false);
@@ -17,7 +17,6 @@ export default function AuthView({ onLogin }) {
         method: "POST",
         body: JSON.stringify({ username: username.trim(), password }),
       });
-      setToken(data.access_token);
       onLogin(data.user);
     } catch (err) {
       setError(err.message);
