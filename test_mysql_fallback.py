@@ -103,9 +103,13 @@ def test_mysql_store_roundtrip():
         mysql_store.save_working_context(
             session_id, "user-1", {"last_intent": "knowledge_rag"}
         )
-        mysql_store.save_working_context(
-            session_id, "user-1", {"current_agent": "knowledge_rag"}
-        )
+        # A5 语义：save_working_context 为整体覆盖，合并由调用方完成
+        # （与 working_memory.update 的读-改-写模式一致）。
+        merged = {
+            **mysql_store.load_working_context(session_id),
+            "current_agent": "knowledge_rag",
+        }
+        mysql_store.save_working_context(session_id, "user-1", merged)
         context = mysql_store.load_working_context(session_id)
         assert context["last_intent"] == "knowledge_rag"
         assert context["current_agent"] == "knowledge_rag"
