@@ -1,8 +1,9 @@
-# Agents on Duty MVP 产品需求文档
+# Agents on Duty MVP 产品需求与实现边界说明
 
 ## 1. 文档说明
 
 - **文档目的**：以仓库当前实现为准，梳理 Agents on Duty 的产品定位、功能范围、用户场景、验收标准与限制，供开发者、评审者和后续协作者对齐认知。
+- **文档定位说明**：本文实际是一份"产品需求 + 实现边界说明"——除产品需求外还包含 Agent 职责、存储细节、API 清单与一致性检查等实现映射内容，篇幅超出常规轻量级 PRD。如需精简阅读，可直接看第 2、5、19 节。
 - **适用范围**：仓库 `Keviniscool-boy/agents-on-duty`（本文基于含存储兜底修复的 `4aa56e9` 之后的状态撰写）。
 - **当前版本定位**：**可运行的多 Agent 客服学习与演示项目**。
 - **明确声明**：这是一个学习、演示和工程实践项目。它实现了真实生产系统中的若干工程模式（合规闸门、幂等、降级链、鉴权），但**不代表已经达到生产级客服系统标准**：业务数据是 mock、评测样本是自建小样本、没有企业级权限/审计/SLA 体系。
@@ -20,7 +21,7 @@
 |---|---|---|
 | LangGraph | 状态机编排：条件边 + 合规重写环 + 断点恢复 | `agents/supervisor.py` |
 | RAG（FAISS） | 政策/知识类问题的检索增强回答 | `memory/long_term.py`、`agents/knowledge_rag.py` |
-| MCP | 标准协议接入订单查询、建单等业务工具，含重试与本地降级 | `mcp_client/client.py`、`mcp_tools/order_server.py` |
+| MCP | 标准协议接入订单查询、建单等业务工具；**运行时单次调用**失败可重试并降级本地工具；**启动阶段**仍要求 Server 成功连接（`api/main.py → await mcp_client.connect()` 无降级） | `mcp_client/client.py`、`mcp_tools/order_server.py` |
 | 合规检查 | 规则先行（PII/敏感词）+ LLM 语义审查，不合格回答带原因重写 ≤2 次 | `agents/compliance_checker.py` |
 | 记忆降级 | Redis → MySQL → 进程内三级存储，写扇出/读回退/回切 | `memory/`、`storage/mysql_store.py` |
 
@@ -58,7 +59,7 @@
 
 1. **意图路由**：知识/业务/兜底三类意图，高频简单请求走本地正则快路径省一次 LLM 调用（`agents/supervisor.py → _deterministic_intent`）。
 2. **知识库问答**：查询改写 → FAISS 检索（top5、阈值 0.55）→ LLM 重排取 Top3 → 严格按引用回答并标注来源（`agents/knowledge_rag.py`）。
-3. **订单与工单工具调用**：MCP stdio Server 提供工具，网络异常退避重试，失败降级本地工具，两级实现共享幂等存储（`agents/ticket_handler.py`）。
+3. **订单与工单工具调用**：MCP stdio Server 提供工具，**运行时**网络异常退避重试并降级本地工具，两级实现共享幂等存储；注意**启动阶段** MCP Server 连接失败会导致应用启动失败（`api/main.py:85`，独立降级未实现）。
 4. **合规检查与修复回路**：规则先行判高危短路；LLM 审查语义风险；违规回答带原因重写 ≤2 次（`MAX_COMPLIANCE_RETRIES=2`），耗尽降级固定话术（`agents/supervisor.py → route_after_compliance`）。
 5. **多层记忆与故障降级**：写入扇出（Redis+MySQL+进程内）、读取回退链、Redis 回切；MySQL 硬依赖，启动自检失败拒绝启动（`memory/`、`storage/mysql_store.py`）。
 6. **SSE 流式过程展示**：`graph.astream(stream_mode="updates")` 映射为节点级事件流，前端实时展示当前阶段（`api/main.py → chat_stream`）。
@@ -97,7 +98,7 @@
 
 - **识别**：确定性路由的正则命中订单号模式（`supervisor.py → has_order_id`）。
 - **处理**：Ticket Handler 拉取 MCP 工具 schema，LLM 决定调用 `order_query(order_id)`（`agents/ticket_handler.py:104-131`）。
-- **MCP 参与**：`MCPClient` 以 stdio 子进程方式调用 `mcp_tools/order_server.py`；`order_query` 查 mock 表并返回 `mock: True`。
+- **MCP 参与**：`MCPClient` 以 stdio 子进程方式调用 `mcp_tools/order_server.py`；`order_query` 查 mock 表并返回 `mock: True`。注意：MCP **单次调用**失败走重试+降级；**Server 启动/初始化失败**会让应用生命周期启动失败（`api/main.py:85` 未捕获连接异常）。
 - **失败降级**：Timeout/ConnectionError 按 1s/2s 退避重试 2 次，仍失败调用本地同名工具 `tools/order.py`（同一张 mock 表）；业务性错误（如"未找到"）不重试。
 - **mock 限制**：只覆盖 3 个演示单号；未在表中的单号返回"未找到"+`mock: True`。**不能用于验证真实物流**——这一点在 README 示例表格与工具描述中均已声明。
 
@@ -184,7 +185,7 @@ flowchart TD
 1. **身份认证**：`Depends(get_current_user)` 校验 Bearer JWT（`auth/security.py`）；密钥未配置时应用在启动期就拒绝运行。
 2. **会话与记忆加载**：`_prepare_chat` 校验会话归属（非本人 403），从短期记忆拉历史拼进初始 State（`api/main.py`）。
 3. **Supervisor 路由**：正则快路径优先，未命中走 LLM 路由；路由上下文来自工作记忆（`supervisor.py:route_decision`）。
-4. **业务执行**：三个分支各自独立执行，工具调用失败有降级（场景二/三）。
+4. **业务执行**：三个分支各自独立执行，工具**单次调用**失败有降级（场景二/三）；MCP Server 启动失败则整个应用无法启动（当前无启动级降级）。
 5. **合规检查**：所有分支的产出统一过闸门（场景五）。
 6. **重写环**：conditional edge 控制最多 2 次带反馈重写，耗尽转降级。
 7. **保存记忆**：`_finalize_chat` 扇出写入 Redis/MySQL/进程内，并更新工作记忆的路由状态（`api/main.py → _finalize_chat`）。
@@ -202,7 +203,7 @@ flowchart TD
 | Fallback | 兜底应答 | 任意状态 | 固定话术 | 无关、不支持、危险、索取内部信息的统一出口，不调用 LLM |
 | Synthesizer | 最终合成 | 业务结果 + 合规状态 | 用户可见回答 | 不编造业务结果、不暴露内部实现；fallback 走固定话术；合规未通过走降级话术 |
 
-**Prompt 分布现状**：所有提示词分散在各 Agent 源码内的字符串常量中——`agents/supervisor.py`（路由提示）、`agents/knowledge_rag.py`（问答/改写/重排三处）、`agents/compliance_checker.py`（`COMPLIANCE_SYSTEM_PROMPT`）、`agents/synthesizer.py`、`agents/ticket_handler.py`。**当前没有独立的 `prompts/` 目录或 prompt 版本管理**——这是后续迭代的明确方向（第 16 节）。
+**Prompt 分布现状**：所有提示词以字符串常量分散在 **6 个 Agent 源文件**中——`agents/supervisor.py`（注意：该文件同时包含 Supervisor 路由提示与 Rewrite 修复提示两处）、`agents/knowledge_rag.py`（问答/改写/重排三处）、`agents/compliance_checker.py`（`COMPLIANCE_SYSTEM_PROMPT`）、`agents/synthesizer.py`、`agents/ticket_handler.py`、`agents/fallback.py`（无 LLM 提示，仅固定话术）。**当前没有独立的 `prompts/` 目录或 prompt 版本管理**——这是后续迭代的明确方向（第 17 节）。
 
 ## 10. 数据、记忆与降级策略
 
@@ -214,7 +215,7 @@ flowchart TD
 | 会话归属 | SQLite（`user_owns_session`） | 无 | 永久 | 同上 |
 | LangGraph checkpoint | AsyncSqliteSaver | 进程内 MemorySaver | 永久，重启可恢复 | SQLite 不可用时降级内存，重启丢断点 |
 | 工单幂等记录 | SQLite（`tools/ticket_store.py`） | 无 | 永久 | 不可用则建单失败（正确行为：不能放弃幂等） |
-| 向量知识库 | FAISS 本地文件 | 文本匹配降级（同阈值） | 永久 | 索引损坏时降级词面匹配，检索质量下降 |
+| 向量知识库 | FAISS 本地文件 | 简单字符串匹配降级（同阈值） | 永久 | 索引损坏时降级词面匹配；**该策略按空格分词，中文问题召回能力明显弱于向量检索，不能等同于正常 RAG** |
 | 订单/物流 | **不存储**——MCP 实时查询 mock 表 | — | — | MCP 挂 → 本地工具查同一张表 |
 
 关键解释：
@@ -265,7 +266,16 @@ flowchart TD
 | Embedding 服务 | 知识库向量化与检索 | 必需（DashScope 原生或 OpenAI 兼容路径，`memory/long_term.py → _build_embeddings`） |
 | MySQL | 兜底存储与审计 | 必需（硬依赖，启动自检） |
 | Redis | 热缓存 + 限流计数 | 可选（降级 MySQL/进程内） |
-| MCP Server（stdio 子进程） | 订单/工单/检索/风控工具 | 必需（失败降级本地工具） |
+| MCP Server（stdio 子进程） | 订单/工单/检索/风控工具 | **启动阶段硬依赖**（连接失败→应用启动失败）；运行时单次调用失败可降级本地工具 |
+
+MCP 工具的 mock 级别明细（`mcp_tools/order_server.py`）：
+
+| 工具 | 实现级别 |
+|---|---|
+| `order_query` | mock 订单表（3 个演示单号），显式返回 `mock: True` |
+| `ticket_create` | 幂等逻辑真实（SQLite 主键），业务系统为演示实现 |
+| `knowledge_search` | 模板串返回，非真实检索 |
+| `risk_check` | 演示实现：仅金额阈值判断 |
 | SQLite | 账户、会话归属、幂等、checkpoint | 必需（本地文件） |
 | FAISS | 向量检索 | 必需（本地库） |
 
@@ -329,7 +339,7 @@ flowchart TD
 - `docker compose up --build -d` 可启动全栈；`MYSQL_PASSWORD` 未设置时 compose 直接报错（B4）。
 - 普通聊天 API 与 SSE 流式接口可用（SSE 在本机 docker compose 环境实测通过，2026-10-25）。
 - 评测脚本可生成结果（`evaluation/results/`）。
-- CI（GitHub Actions）每次推送跑 34 用例 + 前端构建，其中 roundtrip 用例打真实 MySQL service 门禁。
+- CI（GitHub Actions）每次推送跑 34 用例 + 前端构建。roundtrip 用例打真实 MySQL service 门禁，且已从 CI 日志确认真实执行（修复了三处会导致误 skip 的缺陷：service 健康检查密码不一致、连接熔断冷却误伤自检、测试用 `pop` 破坏 MySQL 环境变量；commit e208fa7/00b98a8/eba5571）。
 
 ### 效果评测（历史数据，引用需注明口径）
 
@@ -348,7 +358,8 @@ flowchart TD
 
 ## 15. 当前限制与风险
 
-1. **订单/物流全部 mock**（`tools/mock_data.py`，3 个演示单号）；`knowledge_search` 返回模板串、`risk_check` 仅金额阈值——工具描述已标注，但不能接真实用户。
+1. **MCP Server 启动阶段是硬依赖**：`api/main.py:85` 的 `await mcp_client.connect()` 无异常处理，Server 无法启动（如端口/依赖问题）会导致应用启动失败；运行时单次调用的降级已实现，启动级降级未实现。
+2. **订单/物流全部 mock**（`tools/mock_data.py`，3 个演示单号）；`knowledge_search` 返回模板串、`risk_check` 仅金额阈值——工具描述已标注，但不能接真实用户。
 2. **依赖外部 LLM 与 Embedding 服务**：无凭据则聊天与建索引不可用；模型行为漂移会影响路由/合规表现。
 3. **合规判断存在误判与漏判可能**：LLM 审查是概率性的；正则会误伤普通长数字（如时间戳），宁枉勿纵是有意取舍。
 4. **知识库规模很小**：5 篇文档约 30 行文本（`knowledge_base/`），RAG 表现对"小库精确"场景有效，不能外推到大规模语料。
@@ -391,7 +402,7 @@ flowchart TD
 
 1. **独立 Prompt 管理**：把分散在 6 个 Agent 文件里的提示词收敛到 `prompts/` 目录并版本化，配合评测样本做 prompt 回归。
 2. **扩充评测数据集**：路由/RAG/合规样本各扩到 50+ 条，覆盖边界 case（正则误伤、变相承诺）。
-3. **知识库管理 API**：文档 CRUD + 切片预览 + 增量索引（`IndexIDMap` 支持删除），免重启更新知识——方案已论证（会话记录），未实现。
+3. **知识库管理 API**：文档 CRUD + 切片预览 + 增量更新与删除。当前 FAISS 使用 `IndexFlatIP`（不支持删除）；增量方案（例如基于 ID 映射的索引结构）为候选设计，**仓库中未实现也未验证**。
 4. **成本与延迟监控**：AgentMetrics 已有调用量/耗时，补 token 用量与按请求成本归集。
 5. **前端 httpOnly Cookie 或等价加固**：彻底关闭 localStorage XSS 面。
 
@@ -438,7 +449,19 @@ flowchart TD
 5. **`verify_fallback.py` A4 断言盲区**（外部验证脚本，不在仓库内）：其计数器只统计故障注入函数的调用，结构上无法反映回切修复；本仓库的正向回归在 `test_fallback_resilience.py::test_a4_redis_failover_after_recovery`。
 6. 除上述外，README 示例（订单 1001）、工具行为（`mock: True` 标记）、评测样本数（12/25/8）与代码三方一致，**未发现其它明显不一致**。
 
-## 19. 一页总结
+## 19. 审核结论
+
+本文档已根据仓库当前代码、README、测试与 CI 配置逐项核对（2026-10-26，外部评审一轮 + 修订）。
+
+当前结论：
+
+- 产品定位与 MVP 边界基本准确；核心 Agent、RAG、合规回路、记忆降级与 API 描述与代码一致；
+- MCP **运行时**降级已实现，但 **MCP 启动阶段仍是硬依赖**（`api/main.py:85`），启动级降级未实现；
+- CI 已配置真实 MySQL service 门禁，且修复健康检查密码、连接熔断误伤自检、测试环境变量 `pop` 三处缺陷后，**已从 CI 日志确认 roundtrip 真实执行**；
+- FAISS 文本匹配降级存在，但对中文分词支持有限，不能等同于向量检索；
+- 本文档篇幅已超出轻量级 PRD，定位为"产品需求与实现边界说明"。
+
+## 20. 一页总结
 
 | 项目 | 内容 |
 |---|---|
