@@ -120,7 +120,13 @@ class MySQLStore:
                 cursor.close()
 
     def self_check(self) -> None:
-        """启动自检：连不上 MySQL 直接抛错，由调用方终止启动。"""
+        """启动自检：连不上 MySQL 直接抛错，由调用方终止启动。
+
+        显式健康探测不受连接冷却（熔断）约束——否则先执行的降级
+        用例/操作触发冷却后，紧跟的自检会被快速失败误判为不可用
+        （CI 上 roundtrip 曾因此被误 skip）。
+        """
+        self._connect_cooldown_until = 0.0
         try:
             with self._cursor() as cursor:
                 cursor.execute("SELECT 1")
