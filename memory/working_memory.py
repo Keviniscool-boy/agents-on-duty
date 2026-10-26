@@ -179,8 +179,6 @@ class WorkingMemory:
             "data": dict(data),
         }
 
-        # MySQL 分支需要先读后合并（上下文是全量覆盖存储）。
-        merged: dict[str, Any] | None = None
         client = self._get_redis()
         redis_ok = False
         if client is not None:
@@ -188,14 +186,23 @@ class WorkingMemory:
             if not redis_ok:
                 client = None
 
-        try:
-            base = mysql_store.load_working_context(session_id)
+        # MySQL 是整体覆盖存储，写入前需要合并基。Redis 写成功时直接用
+        # 本地视图做合并基（单写者约束下与 MySQL 等价，省一次读往返）；
+        # Redis 失败时才读 MySQL 补全，防止覆盖丢失其它层已有的字段。
+        if redis_ok:
+            with self._lock:
+                base = dict(self._context.get(session_id, {}))
             merged = {**base, **data}
             mysql_ok = self._write_mysql(session_id, user_id, merged, entry)
-        except (MySQLUnavailableError, pymysql.MySQLError) as exc:
-            mysql_ok = False
-            _record_degradation("mysql", "in-process")
-            logger.warning("MySQL 读取失败，仅合并本地视图：%s", exc)
+        else:
+            try:
+                base = mysql_store.load_working_context(session_id)
+                merged = {**base, **data}
+                mysql_ok = self._write_mysql(session_id, user_id, merged, entry)
+            except (MySQLUnavailableError, pymysql.MySQLError) as exc:
+                mysql_ok = False
+                _record_degradation("mysql", "in-process")
+                logger.warning("MySQL 读取失败，仅合并本地视图：%s", exc)
 
         if not redis_ok and not mysql_ok:
             _record_degradation("all", "in-process")

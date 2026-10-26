@@ -181,7 +181,14 @@ def _get_rate_limit_redis():
     try:
         import redis as redis_sync
 
-        client = redis_sync.Redis.from_url(url, decode_responses=True)
+        client = redis_sync.Redis.from_url(
+            url,
+            decode_responses=True,
+            # 审核追加：不设超时的话，Redis 指向不可达远端时首次登录
+            # 会阻塞到 TCP 超时（数十秒级），拖垮登录接口。
+            socket_connect_timeout=2,
+            socket_timeout=2,
+        )
         client.ping()
         _rate_limit_redis = client
     except Exception:

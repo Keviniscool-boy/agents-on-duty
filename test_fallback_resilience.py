@@ -190,7 +190,8 @@ async def test_a2_sql_error_falls_back_to_in_process(fake_mysql, monkeypatch):
 
     fake_mysql.add_message = add_message_raises
 
-    async def boom_from_url(url, **kwargs):
+    # aioredis.from_url 本身是同步工厂函数，替身也应是同步 raise。
+    def boom_from_url(url, **kwargs):
         raise ConnectionError("redis down")
 
     import redis.asyncio as aioredis
