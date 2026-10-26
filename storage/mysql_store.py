@@ -51,7 +51,7 @@ class MySQLStore:
     @staticmethod
     def _config() -> dict[str, Any]:
         return {
-            "host": os.getenv("MYSQL_HOST", "localhost"),
+            "host": os.getenv("MYSQL_HOST", "127.0.0.1"),
             "port": int(os.getenv("MYSQL_PORT", "3306")),
             "user": os.getenv("MYSQL_USER", "root"),
             "password": os.getenv("MYSQL_PASSWORD", ""),
@@ -122,20 +122,29 @@ class MySQLStore:
     def self_check(self) -> None:
         """启动自检：连不上 MySQL 直接抛错，由调用方终止启动。
 
-        显式健康探测不受连接冷却（熔断）约束——否则先执行的降级
-        用例/操作触发冷却后，紧跟的自检会被快速失败误判为不可用
-        （CI 上 roundtrip 曾因此被误 skip）。
+        显式健康探测不适用普通路径的两条限制：
+        - 不受连接冷却（熔断）约束——否则先执行的降级用例/操作触发
+          冷却后，紧跟的自检会被快速失败误判为不可用（CI 上
+          roundtrip 曾因此被误 skip）；
+        - 自带 3 次探测重试（0.5s 间隔）——端口转发/服务就绪的瞬时
+          抖动不应让门禁误报。
         """
-        self._connect_cooldown_until = 0.0
-        try:
-            with self._cursor() as cursor:
-                cursor.execute("SELECT 1")
-            self._init_schema()
-        except Exception as exc:
-            raise MySQLUnavailableError(
-                "MySQL is required but unreachable: "
-                f"{self._config()['host']}:{self._config()['port']} - {exc}"
-            ) from exc
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            self._connect_cooldown_until = 0.0
+            try:
+                with self._cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                self._init_schema()
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    time.sleep(0.5)
+        raise MySQLUnavailableError(
+            "MySQL is required but unreachable: "
+            f"{self._config()['host']}:{self._config()['port']} - {last_exc}"
+        ) from last_exc
 
     def _init_schema(self) -> None:
         with self._cursor() as cursor:

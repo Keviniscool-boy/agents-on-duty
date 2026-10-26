@@ -46,6 +46,7 @@ def test_working_memory_degrades_to_in_process_when_all_backends_down():
     """Redis 与 MySQL 都不可用时，working memory 仍可工作。"""
     import os
 
+    saved_env = {k: os.environ.get(k) for k in ("MYSQL_HOST", "MYSQL_PORT")}
     os.environ["MYSQL_HOST"] = "127.0.0.1"
     os.environ["MYSQL_PORT"] = "3399"
     try:
@@ -60,14 +61,18 @@ def test_working_memory_degrades_to_in_process_when_all_backends_down():
         memory.clear("sess-degraded")
         assert memory.get_context("sess-degraded") == {}
     finally:
-        os.environ.pop("MYSQL_HOST", None)
-        os.environ.pop("MYSQL_PORT", None)
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 def test_short_term_degrades_to_in_process_when_all_backends_down():
     """Redis 与 MySQL 都不可用时，短期记忆仍可工作。"""
     import os
 
+    saved_env = {k: os.environ.get(k) for k in ("MYSQL_HOST", "MYSQL_PORT")}
     os.environ["MYSQL_HOST"] = "127.0.0.1"
     os.environ["MYSQL_PORT"] = "3399"
     try:
@@ -85,8 +90,11 @@ def test_short_term_degrades_to_in_process_when_all_backends_down():
 
         asyncio.run(run())
     finally:
-        os.environ.pop("MYSQL_HOST", None)
-        os.environ.pop("MYSQL_PORT", None)
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 def test_mysql_store_roundtrip():
