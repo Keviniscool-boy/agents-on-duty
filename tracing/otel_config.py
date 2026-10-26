@@ -22,12 +22,14 @@ _tracer = None
 
 
 class AgentMetrics:
-    """在进程内累计统计各 Agent 的调用指标。"""
+    """在进程内累计统计各 Agent 的调用指标与存储降级事件（B13）。"""
 
     def __init__(self):
         self._call_counts: dict[str, int] = {}
         self._total_duration: dict[str, float] = {}
         self._error_counts: dict[str, int] = {}
+        # 存储层降级/恢复计数（A8/B13）：key 形如 "redis->mysql" / "recovered:redis"。
+        self._degradation_counts: dict[str, int] = {}
 
     def record_call(
         self,
@@ -47,6 +49,16 @@ class AgentMetrics:
                 self._error_counts.get(agent_name, 0) + 1
             )
 
+    def record_degradation(self, from_tier: str, to_tier: str) -> None:
+        """记录一次存储层降级事件（与 tracing 解耦，tracer 缺失也生效）。"""
+        key = f"{from_tier}->{to_tier}"
+        self._degradation_counts[key] = self._degradation_counts.get(key, 0) + 1
+
+    def record_recovery(self, tier: str) -> None:
+        """记录一次存储层恢复（回切成功）。"""
+        key = f"recovered:{tier}"
+        self._degradation_counts[key] = self._degradation_counts.get(key, 0) + 1
+
     def get_summary(self) -> dict[str, dict[str, float | int]]:
         summary = {}
 
@@ -59,6 +71,9 @@ class AgentMetrics:
                 "avg_duration_ms": total_duration / call_count,
                 "error_rate": error_count / call_count,
             }
+
+        if self._degradation_counts:
+            summary["storage_degradation"] = dict(self._degradation_counts)
 
         return summary
 
@@ -121,9 +136,21 @@ def trace_agent_call(agent_name: str) -> Callable:
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         async def wrapper(*args, **kwargs) -> Any:
+            # metrics 与 tracing 解耦（B13）：tracer 缺失时仍然记录调用指标，
+            # 保证 /api/metrics 在未配置 OTEL 时也有数据。
             tracer = get_tracer()
+            start_time = time.perf_counter()
+
             if tracer is None:
-                return await func(*args, **kwargs)
+                try:
+                    result = await func(*args, **kwargs)
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    _metrics.record_call(agent_name, duration_ms, True)
+                    return result
+                except Exception as error:
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    _metrics.record_call(agent_name, duration_ms, False)
+                    raise
 
             span_name = f"agent.{agent_name}.{func.__name__}"
             with tracer.start_as_current_span(span_name) as span:

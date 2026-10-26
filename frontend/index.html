@@ -1,2 +1,6 @@
+<!-- B10 缓解：限制脚本/连接来源，降低 localStorage 存 token 的 XSS 面。
+     connect-src 需包含后端地址；换 API 域名部署时同步修改。 -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:8000 http://127.0.0.1:8000">
 <div id="root"></div>
 <script type="module" src="/src/main.jsx"></script>

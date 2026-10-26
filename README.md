@@ -194,7 +194,7 @@ pip install -r requirements-dev.txt
 DASHSCOPE_API_KEY=dummy-key-for-ci python -m pytest -q
 ```
 
-本地复核（2026-10-25）：测试在 Python 3.14 / Windows、dummy embedding key 下通过。CI 使用 Python 3.12。测试不发起真实 embedding 请求；运行聊天和首次建索引需要有效的 embedding 服务凭据（DashScope 或 OpenAI 兼容）。
+本地复核（2026-10-26，含存储兜底修复回归）：33 passed / 1 skipped——skip 即 roundtrip 在无真实 MySQL 时的显式跳过；CI（Python 3.12 + 真实 MySQL service）中该用例真实执行。测试不发起真实 embedding 请求；运行聊天和首次建索引需要有效的 embedding 服务凭据（DashScope 或 OpenAI 兼容）。
 
 | 模块 | 用例 | 验证什么 | 结果 |
 |---|---|---|---|
@@ -203,10 +203,11 @@ DASHSCOPE_API_KEY=dummy-key-for-ci python -m pytest -q
 | MCP 弹性 | 3 | 本地工具与 MCP 共享幂等存储、MCP 建单幂等 | ✅ |
 | MySQL 兜底与降级链 | 4 | 自检快速失败、双挂时进程内降级；MySQL 可达时做读写往返 | ✅ / 条件执行 |
 | 工作记忆 | 4 | 上下文读写、历史截断、会话清理、会话隔离 | ✅ |
+| 兜底链路回归 | 8 | 写入扇出（Redis+MySQL 双写）、Redis 故障后数据仍可读、SQL 执行期异常入兜底、恢复后数据可见、Redis 回切、JWT 密钥必填、降级检索同阈值 | ✅ |
 | Embedding 提供商 | 5 | DashScope/OpenAI 兼容双路径选择、索引身份不一致自动重建、旧格式元数据兼容 | ✅ |
 
 > [!NOTE]
-> `test_mysql_store_roundtrip` 在 MySQL 不可达时直接返回，因此全绿不代表真实数据库往返已执行。本机复核打印了 `SKIP test_mysql_store_roundtrip (no MySQL reachable)`。
+> `test_mysql_store_roundtrip` 在 MySQL 不可达时**显式 pytest.skip**（此前是静默 return 被计为 passed，已修复）；CI 起真实 MySQL service 作门禁，skip 不允许在该环境出现。
 
 <details>
 <summary><b>端到端评测</b></summary>
@@ -238,7 +239,7 @@ MCP 弹性、记忆一致性、鉴权安全，以及 locust 压测。用法见�
 | RAG 检索 | 检索阈值 0.6 → 0.55；RAG 来源传入合规检查；补高置信度本地路由 | — | 命中率 **92%**，回答正确率 **80%**（25 样本） |
 | 合规检查 | 补 PII/承诺类规则；RAG 上下文传入 LLM 审查 | — | 规则 **6/6**，API 链路 **8/8** |
 | MCP 工具链 | 修复评测脚本导入路径 | — | **7/7**（验证协议与调用链，非数据准确性） |
-| 三层记忆 | — | — | **7/7**，含 Redis 摘除→内存降级→恢复复测 |
+| 三层记忆 | — | — | **7/7**。注意：当时只验证了降级与恢复过程"不崩溃"，未断言故障期数据在恢复后仍可见、Redis 也不会自动回切——这两点（数据可见性/回切）直到 2026-10-26 修复后才由回归用例真正覆盖 |
 | 鉴权与会话 | 注册/重复注册/错误凭证/跨用户会话隔离 | — | **9/9** |
 
 > [!NOTE]

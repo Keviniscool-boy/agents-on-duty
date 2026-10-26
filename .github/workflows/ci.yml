@@ -8,6 +8,21 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    # B9 门禁：起真实 MySQL，test_mysql_store_roundtrip 必须真实执行，
+    # 不允许静默 skip 计为通过。
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci_root_password
+          MYSQL_DATABASE: smart_cs
+        ports:
+          - "3306:3306"
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -proot_password"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -19,10 +34,14 @@ jobs:
       - name: Run tests
         run: python -m pytest -q
         env:
-          # 测试不依赖真实 MySQL/Redis：不可达时用例自动降级或跳过。
           REDIS_URL: redis://127.0.0.1:6399/0
+          # roundtrip 用例打真实 MySQL service（B9 门禁）；
+          # 降级类用例仍指向不可达端口验证进程内兜底。
           MYSQL_HOST: 127.0.0.1
-          MYSQL_PORT: "3399"
+          MYSQL_PORT: "3306"
+          MYSQL_USER: root
+          MYSQL_PASSWORD: ci_root_password
+          MYSQL_DATABASE: smart_cs
           # api.main 在模块级构造 DashScopeEmbeddings，校验 key 非空；
           # 测试用 FakeLLM 驱动，不会真正调用 embedding API。
           DASHSCOPE_API_KEY: dummy-key-for-ci

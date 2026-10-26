@@ -5,6 +5,8 @@
 """
 
 import asyncio
+
+import pytest
 import sys
 from pathlib import Path
 
@@ -88,10 +90,9 @@ def test_short_term_degrades_to_in_process_when_all_backends_down():
 
 
 def test_mysql_store_roundtrip():
-    """连得上 MySQL 时验证完整读写；连不上则跳过。"""
+    """连得上 MySQL 时验证完整读写；连不上显式 skip（B9：不得静默计 passed）。"""
     if not _mysql_available():
-        print("SKIP test_mysql_store_roundtrip (no MySQL reachable)")
-        return
+        pytest.skip("MySQL unreachable - roundtrip not executed (see CI mysql service)")
 
     import uuid
 
@@ -151,6 +152,9 @@ if __name__ == "__main__":
                 failures += 1
                 print(f"FAIL {name}: {exc}")
             except Exception as exc:  # noqa: BLE001
+                if type(exc).__name__ == "Skipped":
+                    print(f"SKIP {name}: {exc}")
+                    continue
                 failures += 1
                 print(f"ERROR {name}: {type(exc).__name__}: {exc}")
     print("ALL TESTS PASSED" if failures == 0 else f"{failures} FAILURE(S)")

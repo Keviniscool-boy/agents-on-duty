@@ -11,7 +11,7 @@ class CustomerServiceUser(HttpUser):
 
     def on_start(self):
         username = f"load_{uuid.uuid4().hex[:10]}"
-        password = "loadtest123"
+        password = os.getenv("LOADTEST_PASSWORD", "")
         register = self.client.post(
             "/api/auth/register",
             json={"username": username, "password": password},

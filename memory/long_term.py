@@ -130,7 +130,21 @@ class LongTermMemory:
         source: str = "",
         metadata: dict | None = None,
     ) -> str:
-        """将一个文本块向量化并加入 FAISS。"""
+        """将一个文本块向量化并加入 FAISS，随后立即落盘（B3）。
+
+        运行时通过本方法新增的知识必须持久化，否则重启即丢。
+        """
+        doc_id = await self._add_document(content, source, metadata)
+        self.save()
+        return doc_id
+
+    async def _add_document(
+        self,
+        content: str,
+        source: str = "",
+        metadata: dict | None = None,
+    ) -> str:
+        """向量化并加入索引/内存，不落盘（批量场景由调用方统一 save）。"""
         doc_id = hashlib.md5(
             content.encode("utf-8")
         ).hexdigest()[:12]
@@ -166,13 +180,14 @@ class LongTermMemory:
 
         #逐个处理文档
         for document in documents:
-            doc_id=await self.add_document(
+            doc_id=await self._add_document(
                 content=document.get("content",""),
                 source=document.get("source",""),
                 metadata=document.get("metadata",{}),
             )
             doc_ids.append(doc_id)
 
+        self.save()
         return doc_ids
 
     def save(self) -> None:
@@ -216,7 +231,7 @@ class LongTermMemory:
                 if chunk in existing_contents:
                     continue
 
-                await self.add_document(
+                await self._add_document(
                     content=chunk,
                     source=file_path.name,
                     metadata={"file": str(file_path)},
@@ -224,6 +239,8 @@ class LongTermMemory:
                 existing_contents.add(chunk)
                 count += 1
 
+        if count:
+            self.save()
         return count
 
     @staticmethod
@@ -269,7 +286,8 @@ class LongTermMemory:
         if not self.documents:
             return []
         if self.index is None:
-            return self._fallback_search(query,top_k)
+            # B14：降级检索与 FAISS 路径同一阈值与分数语义（0~1）。
+            return self._fallback_search(query, top_k, min_score)
 
         # 将用户问题转换为和文档相同空间的向量。
         query_vector = await self.embed_text(query)
@@ -297,19 +315,32 @@ class LongTermMemory:
             results.append(document)
 
         return results
-    def _fallback_search(self, query: str, top_k: int) -> list[dict]:
-        """当 FAISS 索引不可用时，使用简单的文本匹配进行搜索。"""
+    def _fallback_search(
+        self,
+        query: str,
+        top_k: int,
+        min_score: float = 0.6,
+    ) -> list[dict]:
+        """当 FAISS 索引不可用时，使用简单的文本匹配进行搜索。
+
+        B14：分数归一化为"命中词占比"（0~1），与 FAISS 路径的余弦
+        相似度语义对齐，并同样应用 min_score 过滤——降级路径不得
+        因为换实现而放宽召回标准。
+        """
         scored = []
         query_terms = set(query.lower().split())
+        if not query_terms:
+            return []
         for document in self.documents:
             content = document["content"].lower()
-            score = sum(
+            hits = sum(
                 1
                 for term in query_terms
                 if term in content
             )
-            if score > 0:
-                scored.append((score,document))
+            score = hits / len(query_terms)
+            if score >= min_score:
+                scored.append((score, document))
 
         scored.sort(
             key=lambda item: item[0],

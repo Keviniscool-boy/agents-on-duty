@@ -187,7 +187,7 @@ pip install -r requirements-dev.txt
 DASHSCOPE_API_KEY=dummy-key-for-ci python -m pytest -q
 ```
 
-Local recheck on 2026-10-25 passed on Python 3.14 / Windows with a dummy embedding key. CI uses Python 3.12. A valid embedding credential (DashScope or OpenAI-compatible) is required to run chat and create the initial index.
+Local recheck on 2026-10-26 (including storage-fallback regression): 33 passed / 1 skipped — the skip is the roundtrip case without a real MySQL; in CI (Python 3.12 + real MySQL service) it executes for real.
 
 | Module | Cases | What it verifies | Result |
 |---|---|---|---|
@@ -196,10 +196,11 @@ Local recheck on 2026-10-25 passed on Python 3.14 / Windows with a dummy embeddi
 | MCP resilience | 3 | Local tools & MCP share the idempotency store, MCP ticket idempotency | ✅ |
 | MySQL fallback & degradation | 4 | Fail-fast self-check, in-process degradation; roundtrip when MySQL is reachable | ✅ / conditional |
 | Working memory | 4 | Context read/write, history truncation, session clear, session isolation | ✅ |
+| Fallback regression | 8 | Write-through fan-out (Redis+MySQL), data readable after Redis failure, runtime SQL errors fall back, data visible after recovery, Redis fail-back, JWT secret required, degraded retrieval uses same threshold | ✅ |
 | Embedding provider | 5 | Dual-path selection (DashScope / OpenAI-compatible), auto index rebuild on identity mismatch, legacy metadata compat | ✅ |
 
 > [!NOTE]
-> `test_mysql_store_roundtrip` returns when MySQL is unreachable. A green suite alone does not show that a real database roundtrip ran.
+> `test_mysql_store_roundtrip` now uses an explicit `pytest.skip` when MySQL is unreachable (previously a silent `return` was counted as passed — fixed). CI starts a real MySQL service as a gate; the case must actually execute there.
 
 <details>
 <summary><b>End-to-end evaluation</b></summary>

@@ -31,7 +31,7 @@ from auth.database import (
     user_owns_session,
     verify_password,
 )
-from auth.security import create_access_token, get_current_user
+from auth.security import assert_jwt_configured, create_access_token, get_current_user
 from mcp_client.client import MCPClient
 from mcp_tools.order_server import server as mcp_server
 from memory.long_term import LongTermMemory
@@ -55,6 +55,9 @@ graph: Any = None
 async def lifespan(app: FastAPI):
     """Initialize shared services when the API starts and release them on shutdown."""
     global graph
+
+    # 安全自检（B1）：JWT 密钥缺失直接拒绝启动，禁止使用默认密钥。
+    assert_jwt_configured()
 
     # MySQL 是兜底存储，启动自检失败则拒绝启动。
     mysql_store.self_check()
@@ -105,9 +108,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# B5：CORS 白名单化。默认只放行本地前端；部署时用
+# CORS_ALLOW_ORIGINS="https://app.example.com,https://admin.example.com" 覆盖。
+_CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ALLOW_ORIGINS",
+        "http://localhost:8080,http://localhost:5173",
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_CORS_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -146,13 +160,55 @@ class ChatResponse(BaseModel):
 
 
 # 登录限流：同一 IP + 用户名在窗口期内最多尝试 LOGIN_MAX_ATTEMPTS 次。
+# 计数优先存 Redis（跨 worker 共享，B6）；Redis 不可用时降级为
+# 进程内滑动窗口（单 worker 有效，多 worker 防护减弱，见 README）。
 LOGIN_WINDOW_SECONDS = 60
 LOGIN_MAX_ATTEMPTS = 5
 _login_attempts: dict[str, deque[float]] = defaultdict(deque)
+_rate_limit_redis = None
+_rate_limit_redis_failed = False
+
+
+def _get_rate_limit_redis():
+    """懒连接限流用的 Redis；失败后本进程不再重试（与主链路独立）。"""
+    global _rate_limit_redis, _rate_limit_redis_failed
+    if _rate_limit_redis is not None or _rate_limit_redis_failed:
+        return _rate_limit_redis
+    url = os.getenv("REDIS_URL")
+    if not url:
+        _rate_limit_redis_failed = True
+        return None
+    try:
+        import redis as redis_sync
+
+        client = redis_sync.Redis.from_url(url, decode_responses=True)
+        client.ping()
+        _rate_limit_redis = client
+    except Exception:
+        _rate_limit_redis_failed = True
+    return _rate_limit_redis
 
 
 def _check_login_rate_limit(client_ip: str, username: str) -> None:
     """超过限流阈值时抛 429，防止暴力试密码。"""
+    redis_client = _get_rate_limit_redis()
+    if redis_client is not None:
+        redis_key = f"smartcs:login_rl:{client_ip}:{username}"
+        try:
+            count = redis_client.incr(redis_key)
+            if count == 1:
+                redis_client.expire(redis_key, LOGIN_WINDOW_SECONDS)
+            if count > LOGIN_MAX_ATTEMPTS:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Too many login attempts, please retry later",
+                )
+            return
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # Redis 故障 → 落到进程内兜底
+
     key = f"{client_ip}:{username}"
     now = time.monotonic()
     attempts = _login_attempts[key]

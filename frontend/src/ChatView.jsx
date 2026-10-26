@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { API_URL, api, getToken, INTENT_CLASS, INTENT_LABELS } from "./api.js";
+import { API_URL, api, clearToken, getToken, INTENT_CLASS, INTENT_LABELS } from "./api.js";
 
 function formatMeta(value, fallback = "—") {
   if (value === null || value === undefined || value === "") return fallback;
@@ -194,6 +194,12 @@ export default function ChatView({ user, onLogout }) {
         },
         body: JSON.stringify({ message, session_id: sessionId }),
       });
+      if (response.status === 401) {
+        // B11：SSE 通道与 api() 保持一致的过期处理——清 token 并广播登出。
+        clearToken();
+        window.dispatchEvent(new Event("auth-expired"));
+        throw new Error("登录已过期，请重新登录");
+      }
       if (!response.ok || !response.body) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data.detail || "请求失败，请稍后重试");
@@ -324,7 +330,6 @@ export default function ChatView({ user, onLogout }) {
               <h2>智能客服</h2>
               <p className="chat-subtitle">{currentTitle}</p>
             </div>
-            <span className="secure-label">● JWT 已鉴权</span>
           </div>
           <div className="messages">
             {loadingHistory && <div className="loading-state">正在加载会话...</div>}

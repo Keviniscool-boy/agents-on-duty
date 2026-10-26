@@ -18,7 +18,10 @@ async def main() -> None:
     results = []
     username_a = f"auth_eval_a_{uuid.uuid4().hex[:8]}"
     username_b = f"auth_eval_b_{uuid.uuid4().hex[:8]}"
-    password = "auth123456"
+    # B15：评测密码不再入库，从环境变量读取（.env 的 EVAL_PASSWORD）。
+    password = os.getenv("EVAL_PASSWORD", "")
+    if not password:
+        raise SystemExit("EVAL_PASSWORD 未设置：请在环境或 .env 中提供评测密码")
 
     async with httpx.AsyncClient(base_url=API_URL, timeout=120) as client:
         register_a = await client.post(
