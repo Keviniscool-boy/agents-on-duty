@@ -30,6 +30,7 @@ def test_mysql_self_check_fails_fast_without_server():
     store = MySQLStore()
     import os
 
+    saved_port = os.environ.get("MYSQL_PORT")
     os.environ["MYSQL_PORT"] = "3399"  # 不可达端口
     try:
         try:
@@ -39,7 +40,10 @@ def test_mysql_self_check_fails_fast_without_server():
         else:
             raise AssertionError("MySQL 不可达时应抛 MySQLUnavailableError")
     finally:
-        os.environ.pop("MYSQL_PORT", None)
+        if saved_port is None:
+            os.environ.pop("MYSQL_PORT", None)
+        else:
+            os.environ["MYSQL_PORT"] = saved_port
 
 
 def test_working_memory_degrades_to_in_process_when_all_backends_down():
