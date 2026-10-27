@@ -80,7 +80,7 @@
 - **不承诺企业级 SLA / 并发指标**：仓库未定义（见第 13 节）。
 - **不包含知识库运营后台**：知识更新 = 修改 `knowledge_base/*.txt` + 重启（kb 管理子系统在规划中，见第 16 节）。
 - **不包含多租户与组织权限体系**：只有用户级 JWT 与会话归属。
-- **前端 token 存 localStorage**：已知取舍，用 CSP meta 缓解 XSS 面（`frontend/index.html`），未使用 httpOnly Cookie。
+- **前端不使用第三方登录/多因素认证**：单一 JWT（httpOnly Cookie 下发），登出仅为 Cookie 清除、无服务端吊销列表。
 
 ## 6. 核心用户场景
 
@@ -232,7 +232,7 @@ flowchart TD
 
 以下均对应 `frontend/src/` 实际代码：
 
-- **注册与登录**（`AuthView.jsx`）：表单校验与后端一致（用户名 ≥3、密码 ≥6）；登录后 token 存 localStorage（`api.js`，已知取舍，见第 5 节）。
+- **注册与登录**（`AuthView.jsx`）：表单校验与后端一致（用户名 ≥3、密码 ≥6）；登录成功后 token 由后端以 httpOnly Cookie 下发（`api.js` 不再读写 localStorage）。
 - **会话列表与新建会话**（`ChatView.jsx` 侧栏）：`GET /api/sessions` 拉取当前用户的会话（带首条消息截断标题），点选加载历史（`GET /api/history/{id}`），"+" 新建（前端生成 UUID 作为 session_id）。
 - **消息发送**：Enter 发送、Shift+Enter 换行；发送中禁用输入。
 - **SSE 流式状态**：优先调用 `/api/chat/stream`（fetch + ReadableStream 手写 SSE 解析），每个节点事件实时更新状态气泡（如"正在判断问题类型"、"正在进行合规检查"），final 事件落成正式回复。
