@@ -35,7 +35,7 @@ Most Agent tutorials stop at "the demo runs". This project finishes the problems
 - 🎫 **Semantic idempotency** — ticket idempotency keys use "user + content fingerprint" instead of request IDs, surviving both network retries and "the user asks again"
 - 🔌 **MCP tool calls** — standard protocol into the order system, bounded retry on network errors + local fallback tools sharing the same idempotency store
 - 📡 **SSE streaming** — `graph.astream(stream_mode="updates")` maps directly onto an event stream; the frontend watches agents work step by step
-- 🔐 **Complete security stack** — JWT auth, PBKDF2 password hashing, login rate limiting, session ownership checks, automatic PII masking
+- 🔐 **Complete security stack** — JWT auth (httpOnly cookie + CSRF origin check), PBKDF2 password hashing, login rate limiting, session ownership checks, automatic PII masking
 - 📊 **Observability** — OpenTelemetry tracing + per-agent metrics, with an ops panel built into the frontend
 
 ## 🚀 Quick Start
