@@ -31,6 +31,11 @@ class AgentState(TypedDict):
     compliance_reason: str
     compliance_retries: int
     sub_results: dict[str, Any]
+    # 阶段二：业务工具创建了待人工审核的售后单时，由 ticket_handler 填充，
+    # 合规通过后进入 human_review 节点暂停等待客服决定。
+    pending_handoff: dict[str, Any]
+    # 客服通过 Command(resume=...) 恢复时写入的决定。
+    handoff_decision: dict[str, Any]
 
 
 ALLOWED_INTENTS = {
@@ -162,12 +167,63 @@ class SupervisorNode:
 
 
 def route_after_compliance(state: AgentState) -> str:
-    """合规通过或重试耗尽后进入合成；否则带反馈重写。"""
+    """合规通过或重试耗尽后进入合成；否则带反馈重写。
+
+    阶段二：合规通过且本轮创建了待人工审核的售后单时，
+    先进入 human_review 暂停（interrupt），客服决定后再恢复合成。
+    合规未通过的回合不暂停——被拦截的内容没有移交价值。
+    """
     if state.get("compliance_passed", False):
+        if state.get("pending_handoff"):
+            return "human_review"
         return "synthesize"
     if state.get("compliance_retries", 0) >= MAX_COMPLIANCE_RETRIES:
         return "synthesize"
     return "rewrite"
+
+
+class HumanReviewNode:
+    """人工审核断点：interrupt() 把图暂停在检查点上。
+
+    暂停时载荷即客服工作台看到的"交接单"；客服决定后由
+    Command(resume=...) 唤醒，interrupt() 的返回值就是那个决定。
+    """
+
+    @trace_agent_call("human_review")
+    async def process(self, state: AgentState) -> dict[str, Any]:
+        from langgraph.types import interrupt
+
+        handoff = state.get("pending_handoff", {})
+        user_message = next(
+            (
+                message.content
+                for message in reversed(state["messages"])
+                if isinstance(message, HumanMessage)
+            ),
+            "",
+        )
+        payload = {
+            "type": "refund_review",
+            "refund_id": handoff.get("refund_id", ""),
+            "ticket_id": handoff.get("ticket_id", ""),
+            "order_id": handoff.get("order_id", ""),
+            "reason": handoff.get("reason", ""),
+            "user_id": state.get("user_id", ""),
+            "session_id": state.get("session_id", ""),
+            "user_request": user_message,
+            "agent_summary": (
+                f"用户为订单 {handoff.get('order_id', '')} 申请退款，"
+                f"原因：{handoff.get('reason', '')}。"
+                "演示规则：签收 7 天内可申请，商品状态与包装需人工确认。"
+            ),
+            "tool_results": state.get("sub_results", {}).get(
+                "ticket_handler_tool_results", []
+            ),
+        }
+        decision = interrupt(payload)
+        if not isinstance(decision, dict):
+            decision = {"action": str(decision), "note": ""}
+        return {"handoff_decision": decision}
 
 
 class RewriteNode:
@@ -273,6 +329,7 @@ def create_supervisor_graph(
     graph.add_node("fallback", fallback_agent.process)
     graph.add_node("compliance_checker", compliance_checker.process)
     graph.add_node("rewrite", rewriter.process)
+    graph.add_node("human_review", HumanReviewNode().process)
     graph.add_node("synthesize", synthesizer.process)
 
     graph.set_entry_point("supervisor_route")
@@ -292,9 +349,10 @@ def create_supervisor_graph(
     graph.add_conditional_edges(
         "compliance_checker",
         route_after_compliance,
-        {"synthesize": "synthesize", "rewrite": "rewrite"},
+        {"synthesize": "synthesize", "rewrite": "rewrite", "human_review": "human_review"},
     )
     graph.add_edge("rewrite", "compliance_checker")
+    graph.add_edge("human_review", "synthesize")
     graph.add_edge("synthesize", END)
 
     return graph.compile(

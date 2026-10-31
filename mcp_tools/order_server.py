@@ -35,8 +35,8 @@ async def order_list(user_id: str = "", request_id: str = "") -> dict:
 
 
 @server.tool(name="refund_apply", description="为自己的演示订单提交退款申请；需要订单号和用户提供的退款原因，不执行支付")
-async def refund_apply(order_id: str, reason: str, user_id: str = "", request_id: str = "", idempotency_key: str = "") -> dict:
-    return await asyncio.to_thread(apply_refund, user_id, order_id, reason, idempotency_key)
+async def refund_apply(order_id: str, reason: str, user_id: str = "", request_id: str = "", idempotency_key: str = "", session_id: str = "") -> dict:
+    return await asyncio.to_thread(apply_refund, user_id, order_id, reason, idempotency_key, session_id)
 
 #knowledge_search 
 #输入查询问题，返回多个知识分段

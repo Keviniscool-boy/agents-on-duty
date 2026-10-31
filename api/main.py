@@ -36,15 +36,28 @@ from auth.security import (
     clear_auth_cookie,
     create_access_token,
     get_current_user,
+    require_role,
     set_auth_cookie,
 )
+from auth.database import set_user_role
 from mcp_client.client import MCPClient
 from mcp_tools.order_server import server as mcp_server
 from memory.long_term import LongTermMemory
 from memory.short_term import ShortTermMemory
 from memory.working_memory import WorkingMemory
+from langgraph.types import Command
 from storage.mysql_store import mysql_store
-from storage.after_sales import apply_refund, cancel_refund, get_order, list_orders, list_refunds
+from storage.after_sales import (
+    apply_refund,
+    cancel_refund,
+    get_order,
+    get_refund_review,
+    list_orders,
+    list_refund_actions,
+    list_refund_reviews,
+    list_refunds,
+    record_refund_decision,
+)
 from tracing.otel_config import get_metrics, init_tracer, trace_agent_call
 
 
@@ -97,6 +110,8 @@ async def lifespan(app: FastAPI):
     if count:
         long_term_memory.save()
         print(f"Loaded and saved {count} knowledge chunks")
+    elif long_term_memory.index_build_failed:
+        print("Knowledge index update failed; previous index retained")
     else:
         print(
             f"Loaded {len(long_term_memory.documents)} persisted knowledge chunks"
@@ -181,6 +196,16 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
 
 
+class DecisionRequest(BaseModel):
+    action: str
+    note: str = ""
+
+
+class RoleGrantRequest(BaseModel):
+    username: str
+    role: str
+
+
 class ChatResponse(BaseModel):
     response: str
     session_id: str
@@ -188,6 +213,8 @@ class ChatResponse(BaseModel):
     current_agent: str
     compliance_passed: bool
     compliance_reason: str
+    # 阶段二：本轮触发了人工审核暂停（interrupt），等待客服决定。
+    awaiting_human: bool = False
 
 
 # 登录限流：同一 IP + 用户名在窗口期内最多尝试 LOGIN_MAX_ATTEMPTS 次。
@@ -328,6 +355,122 @@ def cancel_refund_request(refund_id: str, current_user: dict = Depends(get_curre
     return result
 
 
+async def _resume_handoff(session_id: str, decision: dict, owner_user_id: str) -> dict:
+    """阶段二：恢复被 human_review 暂停的线程；未暂停时为 no-op。
+
+    幂等保护双保险：决定写入前的状态机守卫挡住重复审批，
+    这里的 interrupts 检查挡住对非暂停线程的误恢复。
+    恢复产生的最终答复写入客户会话历史，客户侧立即可见。
+    """
+    config = {"configurable": {"thread_id": session_id}}
+    if graph is None:
+        # 图未初始化（测试或降级场景）：决定已落库，无线程可恢复。
+        return {"resumed": False, "response": ""}
+    state = await graph.aget_state(config)
+    if not any(task.interrupts for task in state.tasks):
+        return {"resumed": False, "response": ""}
+    result = await graph.ainvoke(Command(resume=decision), config=config)
+    response = result.get("final_response") or "人工审核已完成。"
+    await short_term_memory.add_message(
+        session_id, "assistant", response, user_id=owner_user_id
+    )
+    return {"resumed": True, "response": response}
+
+
+@app.get("/api/workbench/refunds")
+def workbench_refunds(operator: dict = Depends(require_role("agent", "admin"))):
+    """客服工作台：退款申请列表（仅 agent/admin 可见）。"""
+    return {"refunds": list_refund_reviews()}
+
+
+@app.get("/api/workbench/refunds/{refund_id}")
+async def workbench_refund_detail(
+    refund_id: str,
+    operator: dict = Depends(require_role("agent", "admin")),
+):
+    """工作台详情：申请 + 订单 + 审计 + 暂停线程的交接单 + 会话历史。
+
+    客服可以查看处于售后流程中的会话内容，这是显式授权的越权；
+    普通用户访问工作台一律 403，既有 user_owns_session 语义不受影响。
+    """
+    review = get_refund_review(refund_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail={"error": "refund_not_found", "message": "退款申请不存在"})
+    session_id = review.get("session_id") or ""
+    thread_paused = False
+    handoff_payload = None
+    if session_id and graph is not None:
+        config = {"configurable": {"thread_id": session_id}}
+        state = await graph.aget_state(config)
+        for task in state.tasks:
+            if task.interrupts:
+                thread_paused = True
+                handoff_payload = task.interrupts[0].value
+                break
+    history = await short_term_memory.get_history(session_id) if session_id else []
+    return {
+        "refund": review,
+        "session_id": session_id,
+        "thread_paused": thread_paused,
+        "handoff": handoff_payload,
+        "history": history,
+        "actions": list_refund_actions(refund_id),
+    }
+
+
+@app.post("/api/workbench/refunds/{refund_id}/decision")
+async def decide_refund(
+    refund_id: str,
+    request: DecisionRequest,
+    operator: dict = Depends(require_role("agent", "admin")),
+):
+    """人工决定：批准 / 拒绝 / 需补充信息；有暂停线程时恢复图执行。"""
+    if request.action not in {"approve", "reject", "need_info"}:
+        raise HTTPException(status_code=400, detail={"error": "invalid_action", "message": "不支持的操作类型"})
+    if request.action == "need_info" and not request.note.strip():
+        raise HTTPException(status_code=400, detail={"error": "note_required", "message": "要求补充信息时必须填写追问内容"})
+
+    review = get_refund_review(refund_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail={"error": "refund_not_found", "message": "退款申请不存在"})
+
+    result = record_refund_decision(refund_id, request.action, request.note, operator["id"])
+    if "error" in result:
+        code = 404 if result["error"] == "refund_not_found" else 409 if result["error"] == "invalid_state" else 400
+        raise HTTPException(status_code=code, detail=result)
+
+    decision = {
+        "action": request.action,
+        "note": request.note.strip()[:500],
+        "operator": operator["username"],
+    }
+    resumed = {"resumed": False, "response": ""}
+    session_id = review.get("session_id") or ""
+    if session_id:
+        resumed = await _resume_handoff(session_id, decision, review["user_id"])
+
+    return {
+        "refund": result,
+        "resumed": resumed["resumed"],
+        "agent_response": resumed["response"],
+        "actions": list_refund_actions(refund_id),
+    }
+
+
+@app.post("/api/admin/users/role")
+def grant_user_role(
+    request: RoleGrantRequest,
+    admin: dict = Depends(require_role("admin")),
+):
+    """管理员授予/变更角色。角色白名单：user / agent / admin。"""
+    if request.role not in {"user", "agent", "admin"}:
+        raise HTTPException(status_code=400, detail={"error": "invalid_role", "message": "角色只能是 user、agent 或 admin"})
+    row = set_user_role(request.username, request.role)
+    if row is None:
+        raise HTTPException(status_code=404, detail={"error": "user_not_found", "message": "用户不存在"})
+    return {"user": dict(row)}
+
+
 async def _prepare_chat(
     request: ChatRequest,
     current_user: dict,
@@ -364,6 +507,10 @@ async def _prepare_chat(
         "compliance_reason": "",
         "compliance_retries": 0,
         "sub_results": {},
+        # 阶段二：显式清空跨轮残留的暂停信号，防止上一轮的
+        # pending_handoff 让本轮误入人工审核节点。
+        "pending_handoff": {},
+        "handoff_decision": {},
     }
     config = {"configurable": {"thread_id": session_id}}
     return session_id, initial_state, config
@@ -376,8 +523,13 @@ async def _finalize_chat(
     result: dict[str, Any],
 ) -> ChatResponse:
     """把图执行结果写入记忆并组装响应，chat 与 chat/stream 共用。"""
+    interrupted = bool(result.get("__interrupt__"))
     response = result["final_response"]
-    if not result["compliance_passed"]:
+    if interrupted:
+        # 图暂停在 human_review：本轮给用户的是等待提示，
+        # 最终答复由客服决定后的恢复流程写入会话历史。
+        response = "您的退款申请已提交人工审核，客服处理后将继续为您跟进。"
+    elif not result["compliance_passed"]:
         response = "抱歉，该回答未通过合规审查，暂时无法提供详细信息。"
 
     working_memory.update(
@@ -407,6 +559,7 @@ async def _finalize_chat(
         current_agent=result["current_agent"],
         compliance_passed=result["compliance_passed"],
         compliance_reason=result["compliance_reason"],
+        awaiting_human=interrupted,
     )
 
 
@@ -442,6 +595,7 @@ NODE_STATUS = {
     "fallback": "正在生成兜底回答",
     "compliance_checker": "正在进行合规检查",
     "rewrite": "正在根据合规反馈重写回答",
+    "human_review": "已转人工审核，等待客服处理",
     "synthesize": "正在整理最终回答",
 }
 
@@ -463,6 +617,7 @@ async def chat_stream(
         yield _sse({"event": "session", "session_id": session_id})
 
         merged: dict[str, Any] = {}
+        interrupted = False
         try:
             async for update in graph.astream(
                 initial_state,
@@ -470,6 +625,10 @@ async def chat_stream(
                 stream_mode="updates",
             ):
                 for node_name, delta in update.items():
+                    if node_name == "__interrupt__":
+                        # 暂停信号：delta 是 Interrupt 元组，不能混进 merged。
+                        interrupted = True
+                        continue
                     if delta:
                         merged.update(delta)
                     yield _sse(
@@ -483,7 +642,11 @@ async def chat_stream(
             yield _sse({"event": "error", "message": "Agent processing failed"})
             return
 
-        if not merged.get("final_response") and "fallback" not in merged:
+        if (
+            not merged.get("final_response")
+            and "fallback" not in merged
+            and not interrupted
+        ):
             yield _sse({"event": "error", "message": "Agent processing failed"})
             return
 
@@ -493,7 +656,16 @@ async def chat_stream(
             "current_agent": merged.get("current_agent", ""),
             "compliance_passed": merged.get("compliance_passed", False),
             "compliance_reason": merged.get("compliance_reason", ""),
+            "__interrupt__": interrupted,
         }
+        if result["__interrupt__"]:
+            yield _sse(
+                {
+                    "event": "status",
+                    "node": "human_review",
+                    "message": "已转人工审核，等待客服处理",
+                }
+            )
         chat_response = await _finalize_chat(
             session_id,
             current_user["id"],
@@ -522,7 +694,18 @@ async def get_history(
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "version": "1.0.0"}
+    knowledge_status = long_term_memory.knowledge_status()
+    overall_status = {
+        "degraded": "degraded",
+        "empty": "degraded",
+        "unknown": "unknown",
+        "ready": "healthy",
+    }[knowledge_status]
+    return {
+        "status": overall_status,
+        "version": "1.0.0",
+        "knowledge_base": {"status": knowledge_status, "documents": len(long_term_memory.documents)},
+    }
 
 
 @app.get("/api/sessions")

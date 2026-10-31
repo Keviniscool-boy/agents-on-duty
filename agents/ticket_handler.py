@@ -56,7 +56,13 @@ class TicketHandlerAgent:
         if tool_name == "order_list":
             return {"orders": list_orders(arguments["user_id"])}
         if tool_name == "refund_apply":
-            return apply_refund(arguments["user_id"], arguments["order_id"], arguments["reason"], arguments["idempotency_key"])
+            return apply_refund(
+                arguments["user_id"],
+                arguments["order_id"],
+                arguments["reason"],
+                arguments["idempotency_key"],
+                arguments.get("session_id", ""),
+            )
         if tool_name == "ticket_create":
             # LLM 可能多传无关字段，白名单过滤防止 TypeError。
             allowed = {"title", "description", "priority", "category", "idempotency_key"}
@@ -122,7 +128,8 @@ class TicketHandlerAgent:
             mcp_tools = await self.mcp_client.list_tools()
             available_tools = mcp_tools.tools
             use_local = False
-        except (TimeoutError, ConnectionError, RuntimeError, OSError):
+        except (TimeoutError, ConnectionError, RuntimeError, OSError, AttributeError):
+            # AttributeError：测试/降级场景 mcp_client 为 None，直接走本地工具。
             available_tools = await local_mcp_server.list_tools()
             use_local = True
         llm_tools = [
@@ -171,6 +178,9 @@ class TicketHandlerAgent:
             tool_arguments.pop("idempotency_key", None)
             if tool_name in {"order_query", "order_list", "refund_apply"}:
                 tool_arguments["user_id"] = state["user_id"]
+            # 阶段二：会话号服务端注入，退款单据此关联可恢复的图线程。
+            if tool_name == "refund_apply":
+                tool_arguments["session_id"] = state.get("session_id", "")
             request_id = tool_call["id"] or str(uuid.uuid4())
             tool_arguments["request_id"] = request_id
             if tool_name == "refund_apply":
@@ -221,9 +231,24 @@ class TicketHandlerAgent:
         # 第二次调用把 MCP 工具结果交给 LLM，生成面向用户的回答。
         final_response = await llm_with_tools.ainvoke(messages)
 
+        # 阶段二：本轮创建了待人工审核的退款单 → 触发 human_review 暂停。
+        # 无命中时必须显式清空，防止同线程上一轮的暂停信号残留误触发。
+        pending_handoff = {}
+        for entry in tool_results:
+            result = entry.get("result") or {}
+            if entry.get("tool") == "refund_apply" and result.get("status") == "pending_review":
+                pending_handoff = {
+                    "refund_id": result.get("id", ""),
+                    "ticket_id": result.get("ticket_id", ""),
+                    "order_id": result.get("order_id", ""),
+                    "reason": result.get("reason", ""),
+                }
+                break
+
         return {
             "messages": [response, *tool_messages, final_response],
             "final_response": final_response.content,
+            "pending_handoff": pending_handoff,
             "sub_results": {
                 **state.get("sub_results", {}),
                 "ticket_handler": final_response.content,
