@@ -1,5 +1,6 @@
 import json
 import hashlib
+import logging
 import os
 from pathlib import Path
 
@@ -11,6 +12,11 @@ from langchain_openai import OpenAIEmbeddings
 
 
 load_dotenv()
+logger = logging.getLogger(__name__)
+
+
+class EmbeddingUnavailable(Exception):
+    """The embedding provider could not process a request."""
 
 
 class _LazyEmbeddings:
@@ -79,6 +85,8 @@ class LongTermMemory:
         self.embeddings, self.embedding_identity = _build_embeddings()
         self.documents = []
         self.index = None
+        self.embedding_available = None
+        self.index_build_failed = False
         self._init_index()
 
     def _init_index(self) -> None:
@@ -122,7 +130,24 @@ class LongTermMemory:
 
     async def embed_text(self, text: str) -> list[float]:
         """调用配置的 Embedding 服务，将文本转换成向量。"""
-        return await self.embeddings.aembed_query(text)
+        try:
+            vector = await self.embeddings.aembed_query(text)
+        except Exception as exc:
+            self.embedding_available = False
+            logger.warning("Embedding request failed (%s)", type(exc).__name__)
+            raise EmbeddingUnavailable("Embedding service unavailable") from exc
+        self.embedding_available = True
+        return vector
+
+    def knowledge_status(self) -> str:
+        """Report the last observed state without probing the provider."""
+        if self.index_build_failed or self.embedding_available is False:
+            return "degraded"
+        if not self.documents:
+            return "empty"
+        if self.embedding_available is None:
+            return "unknown"
+        return "ready"
 
     async def add_document(
         self,
@@ -223,22 +248,32 @@ class LongTermMemory:
             for document in self.documents
         }
 
-        for file_path in kb_path.glob("**/*.txt"):
-            content = file_path.read_text(encoding="utf-8")
-            chunks = self._chunk_text(content)
+        previous_index = faiss.clone_index(self.index) if self.index is not None else None
+        previous_documents = list(self.documents)
+        try:
+            for file_path in kb_path.glob("**/*.txt"):
+                content = file_path.read_text(encoding="utf-8")
+                chunks = self._chunk_text(content)
 
-            for chunk in chunks:
-                if chunk in existing_contents:
-                    continue
+                for chunk in chunks:
+                    if chunk in existing_contents:
+                        continue
 
-                await self._add_document(
-                    content=chunk,
-                    source=file_path.name,
-                    metadata={"file": str(file_path)},
-                )
-                existing_contents.add(chunk)
-                count += 1
+                    await self._add_document(
+                        content=chunk,
+                        source=file_path.name,
+                        metadata={"file": str(file_path)},
+                    )
+                    existing_contents.add(chunk)
+                    count += 1
+        except EmbeddingUnavailable:
+            self.index = previous_index
+            self.documents = previous_documents
+            self.index_build_failed = True
+            logger.warning("Knowledge index update failed; restored previous in-memory index")
+            return 0
 
+        self.index_build_failed = False
         if count:
             self.save()
         return count
@@ -283,6 +318,8 @@ class LongTermMemory:
         min_score: float = 0.6,
     ) -> list[dict]:
         """根据问题搜索最相关的知识文档。"""
+        if self.index_build_failed:
+            raise EmbeddingUnavailable("Knowledge index update did not complete")
         if not self.documents:
             return []
         if self.index is None:

@@ -59,6 +59,8 @@ _可运行的 LangGraph 客服系统：从意图路由、RAG / MCP 工具到合�
 > [!TIP]
 > 需要 Docker、一个 OpenAI 兼容的聊天模型，以及一个 embedding 服务——配置 `DASHSCOPE_API_KEY` 走阿里云原生接口，或留空复用 `OPENAI_BASE_URL` 走任何 OpenAI 兼容接口。首次启动会为 `knowledge_base/` 中的文本生成向量索引。
 
+Embedding 服务故障时，知识库问答会提示暂不可用。启动时索引更新失败会保留原索引但暂停知识检索；服务恢复后需重启以重试建库。`/health` 展示最近一次观察到的知识库状态，并非对所有依赖的实时探测。
+
 ```bash
 # 1. 配置环境变量
 git clone https://github.com/Keviniscool-boy/agents-on-duty.git
