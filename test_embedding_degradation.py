@@ -170,3 +170,48 @@ class FakeReplyLLM:
 
     async def ainvoke(self, messages, **kwargs):
         return self.responses.pop(0)
+
+
+@pytest.mark.parametrize(
+    ("knowledge_status", "overall_status"),
+    [("degraded", "degraded"), ("empty", "degraded"), ("unknown", "unknown"), ("ready", "healthy")],
+)
+def test_health_reports_last_observed_knowledge_status(monkeypatch, knowledge_status, overall_status):
+    import api.main as api_main
+
+    class FakeMemory:
+        documents = []
+
+        def knowledge_status(self):
+            return knowledge_status
+
+    monkeypatch.setattr(api_main, "long_term_memory", FakeMemory())
+    result = asyncio.run(api_main.health_check())
+    assert result["status"] == overall_status
+    assert result["knowledge_base"]["status"] == knowledge_status
+
+
+def test_lifespan_starts_when_embedding_index_build_fails(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    import api.main as api_main
+
+    memory = SimpleNamespace(documents=[], index_build_failed=True, load_knowledge_base=AsyncMock(return_value=0))
+    monkeypatch.setattr(api_main, "long_term_memory", memory)
+    monkeypatch.setattr(api_main, "assert_jwt_configured", lambda: None)
+    monkeypatch.setattr(api_main, "mysql_store", SimpleNamespace(self_check=lambda: None))
+    monkeypatch.setattr(api_main, "init_database", lambda: None)
+    monkeypatch.setattr(api_main, "init_tracer", lambda **kwargs: None)
+    monkeypatch.setattr(api_main, "ChatOpenAI", lambda **kwargs: object())
+    monkeypatch.setattr(api_main, "create_sqlite_checkpointer", AsyncMock(return_value=object()))
+    monkeypatch.setattr(api_main, "close_checkpoint", AsyncMock())
+    monkeypatch.setattr(api_main, "create_supervisor_graph", lambda *args, **kwargs: object())
+    monkeypatch.setattr(api_main, "mcp_client", SimpleNamespace(connect=AsyncMock(), close=AsyncMock()))
+
+    async def scenario():
+        async with api_main.lifespan(api_main.app):
+            assert api_main.graph is not None
+        assert api_main.graph is None
+
+    asyncio.run(scenario())
+    memory.load_knowledge_base.assert_awaited_once()
