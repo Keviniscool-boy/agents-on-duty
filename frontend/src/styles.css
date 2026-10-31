@@ -123,6 +123,7 @@ input:focus, textarea:focus {
 .after-sales-actions { display: flex; align-items: center; gap: 20px; }
 .after-sales-actions .primary { padding: 10px 18px; }
 .after-sales-notice { color: var(--ok); font-size: 14px; }
+.workbench-evidence { max-width: 100%; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .error {
   color: var(--danger);
   background: #fff0ee;

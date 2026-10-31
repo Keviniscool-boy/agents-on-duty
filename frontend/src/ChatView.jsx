@@ -7,6 +7,7 @@ import {
 } from "react";
 import { API_URL, api, logout, INTENT_CLASS, INTENT_LABELS } from "./api.js";
 import AfterSales from "./AfterSales.jsx";
+import WorkbenchPanel from "./WorkbenchPanel.jsx";
 
 function formatMeta(value, fallback = "—") {
   if (value === null || value === undefined || value === "") return fallback;
@@ -120,7 +121,9 @@ function TraceChips({ meta }) {
       <span className={`chip ${intentClass}`} title="本轮命中的 Agent">
         {intentLabel}
       </span>
-      {meta.compliance_passed ? (
+      {meta.awaiting_human ? (
+        <span className="chip info" title="等待客服审核">等待人工</span>
+      ) : meta.compliance_passed ? (
         <span className="chip pass" title="已通过合规审查">
           ✓ 合规
         </span>
@@ -143,6 +146,8 @@ export default function ChatView({ user, onLogout }) {
   const [error, setError] = useState("");
   const [showOps, setShowOps] = useState(false);
   const [showAfterSales, setShowAfterSales] = useState(false);
+  const [showWorkbench, setShowWorkbench] = useState(false);
+  const isAgent = user.role === "agent" || user.role === "admin";
   const [showNav, setShowNav] = useState(false);
   const [streamStatus, setStreamStatus] = useState("");
   const messagesEndRef = useRef(null);
@@ -154,6 +159,7 @@ export default function ChatView({ user, onLogout }) {
 
   const loadHistory = useCallback(async (id) => {
     setShowAfterSales(false);
+    setShowWorkbench(false);
     setShowNav(false);
     setLoadingHistory(true);
     setError("");
@@ -234,6 +240,7 @@ export default function ChatView({ user, onLogout }) {
                   intent: data.intent,
                   compliance_passed: data.compliance_passed,
                   compliance_reason: data.compliance_reason,
+                  awaiting_human: data.awaiting_human,
                 },
               },
             ]);
@@ -255,6 +262,7 @@ export default function ChatView({ user, onLogout }) {
 
   function newConversation() {
     setShowAfterSales(false);
+    setShowWorkbench(false);
     setShowNav(false);
     setSessionId(crypto.randomUUID());
     setMessages([]);
@@ -275,7 +283,18 @@ export default function ChatView({ user, onLogout }) {
           在线
         </div>
         <div className="user-menu">
-          <button className="text-button inverse" onClick={() => setShowAfterSales((v) => !v)}>
+          {isAgent && (
+            <button
+              className="text-button inverse"
+              onClick={() => { setShowAfterSales(false); setShowWorkbench((v) => !v); }}
+            >
+              {showWorkbench ? "返回会话" : "客服工作台"}
+            </button>
+          )}
+          <button
+            className="text-button inverse"
+            onClick={() => { setShowWorkbench(false); setShowAfterSales((v) => !v); }}
+          >
             {showAfterSales ? "返回会话" : "订单售后"}
           </button>
           <button className="text-button inverse" onClick={() => setShowNav((v) => !v)}>
@@ -335,7 +354,7 @@ export default function ChatView({ user, onLogout }) {
           </div>
         </aside>
 
-        {showAfterSales ? <AfterSales /> : <section className="chat-panel">
+        {showWorkbench && isAgent ? <WorkbenchPanel /> : showAfterSales ? <AfterSales /> : <section className="chat-panel">
           <div className="chat-heading">
             <div>
               <p className="eyebrow">SUPERVISOR AGENT</p>

@@ -134,7 +134,7 @@ def test_cancel_updates_ticket_and_repeat_is_idempotent(isolated_db, order):
 def test_cancel_rolls_back_when_ticket_state_is_inconsistent(isolated_db, order):
     created = svc.apply_refund("user-a", order["order_id"], "划痕", "key-1")
     with sqlite3.connect(isolated_db) as db:
-        db.execute("UPDATE refund_tickets SET status = 'processing' WHERE id = ?", (created["ticket_id"],))
+        db.execute("UPDATE refund_tickets SET status = 'resolved' WHERE id = ?", (created["ticket_id"],))
     with pytest.raises(RuntimeError, match="inconsistent"):
         svc.cancel_refund("user-a", created["id"])
     assert svc.list_refunds("user-a")[0]["status"] == "pending_review"

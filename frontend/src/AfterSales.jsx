@@ -13,6 +13,8 @@ export default function AfterSales() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [informationId, setInformationId] = useState("");
+  const [information, setInformation] = useState("");
   const requestKey = useRef("");
 
   const refresh = useCallback(async () => {
@@ -55,9 +57,30 @@ export default function AfterSales() {
     setError("");
     setNotice("");
     try {
-      await api(`/api/refunds/${encodeURIComponent(id)}/cancel`, { method: "POST" });
-      setNotice("退款申请已撤回。");
+      const result = await api(`/api/refunds/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+      setNotice(result.resume_pending ? "退款申请已撤回，会话恢复等待重试。" : "退款申请已撤回。");
       await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitInformation(event) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await api(`/api/refunds/${encodeURIComponent(informationId)}/information`, {
+        method: "POST", body: JSON.stringify({ content: information }),
+      });
+      setInformation("");
+      setInformationId("");
+      await refresh();
+      setNotice("补充信息已提交，等待客服继续审核。");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -89,11 +112,16 @@ export default function AfterSales() {
         <h3>退款申请</h3>
         <div className="after-sales-list">
           {refunds.map((refund) => <article className="after-sales-row" key={refund.id}>
-            <div><strong>{refundStatus[refund.status] || refund.status}</strong><p>{refund.id}</p><span>订单 {refund.order_id}</span><p>{refund.reason}</p></div>
-            {refund.status === "pending_review" && <button className="text-button" disabled={busy} onClick={() => cancel(refund.id)}>撤回申请</button>}
+            <div><strong>{refund.ticket_status === "processing" ? "待补充信息" : refundStatus[refund.status] || refund.status}</strong><p>{refund.id}</p><span>订单 {refund.order_id}</span><p>{refund.reason}</p>{refund.ticket_status === "processing" && <p>客服要求：{refund.requested_info}</p>}</div>
+            {refund.status === "pending_review" && <div className="after-sales-actions">{refund.ticket_status === "processing" && <button type="button" className="text-button" disabled={busy} onClick={() => { setInformationId(refund.id); setInformation(""); }}>补充信息</button>}<button className="text-button" disabled={busy} onClick={() => cancel(refund.id)}>撤回申请</button></div>}
+            {refund.status === "cancelled" && refund.resume_status && refund.resume_status !== "done" && <button type="button" className="text-button" disabled={busy} onClick={() => cancel(refund.id)}>重试会话恢复</button>}
           </article>)}
           {refunds.length === 0 && <p className="muted">暂无退款申请</p>}
         </div>
+        {informationId && <form className="after-sales-form" onSubmit={submitInformation}>
+          <label>补充信息<textarea required maxLength={1000} rows={3} value={information} onChange={(event) => setInformation(event.target.value)} /></label>
+          <div className="after-sales-actions"><button className="primary" disabled={busy || !information.trim()}>提交信息</button><button type="button" className="text-button" disabled={busy} onClick={() => setInformationId("")}>取消</button></div>
+        </form>}
       </>}
     </section>
   );

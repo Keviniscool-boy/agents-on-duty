@@ -31,6 +31,11 @@ class AgentState(TypedDict):
     compliance_reason: str
     compliance_retries: int
     sub_results: dict[str, Any]
+    # 阶段二：业务工具创建了待人工审核的售后单时，由 ticket_handler 填充，
+    # 固定等待话术后进入 human_review 节点暂停等待客服决定。
+    pending_handoff: dict[str, Any]
+    # 客服通过 Command(resume=...) 恢复时写入的决定。
+    handoff_decision: dict[str, Any]
 
 
 ALLOWED_INTENTS = {
@@ -170,6 +175,51 @@ def route_after_compliance(state: AgentState) -> str:
     return "rewrite"
 
 
+class HumanReviewNode:
+    """人工审核断点：interrupt() 把图暂停在检查点上。
+
+    暂停时载荷即客服工作台看到的"交接单"；客服决定后由
+    Command(resume=...) 唤醒，interrupt() 的返回值就是那个决定。
+    """
+
+    @trace_agent_call("human_review")
+    async def process(self, state: AgentState) -> dict[str, Any]:
+        from langgraph.types import interrupt
+
+        handoff = state.get("pending_handoff", {})
+        user_message = next(
+            (
+                message.content
+                for message in reversed(state["messages"])
+                if isinstance(message, HumanMessage)
+            ),
+            "",
+        )
+        payload = {
+            "type": "refund_review",
+            "refund_id": handoff.get("refund_id", ""),
+            "ticket_id": handoff.get("ticket_id", ""),
+            "order_id": handoff.get("order_id", ""),
+            "reason": handoff.get("reason", ""),
+            "user_id": state.get("user_id", ""),
+            "session_id": state.get("session_id", ""),
+            "user_request": user_message,
+            "agent_summary": (
+                f"用户为订单 {handoff.get('order_id', '')} 申请退款，"
+                f"原因：{handoff.get('reason', '')}。"
+                "演示规则：签收 7 天内可申请，商品状态与包装需人工确认。"
+            ),
+            "tool_results": state.get("sub_results", {}).get(
+                "ticket_handler_tool_results", []
+            ),
+            "knowledge_sources": state.get("sub_results", {}).get("knowledge_rag_context", []),
+        }
+        decision = interrupt(payload)
+        if not isinstance(decision, dict):
+            decision = {"action": str(decision), "note": ""}
+        return {"handoff_decision": decision}
+
+
 class RewriteNode:
     """合规未通过时，把拦截原因带回提示词重写回答，而不是原样重试。"""
 
@@ -225,9 +275,8 @@ def _get_checkpointer():
 async def create_sqlite_checkpointer():
     """创建 SQLite 持久化 checkpointer（必须在事件循环内调用）。
 
-    API 全部走 ainvoke/astream，必须用 AsyncSqliteSaver
-    （同步的 SqliteSaver 不支持 async 方法）。创建失败时返回
-    进程内 MemorySaver，应用不因此拒绝启动。
+    API 全部走 ainvoke/astream，必须用 AsyncSqliteSaver。
+    人工审核需要跨重启恢复，无法创建持久化检查点时应拒绝启动。
     """
     global _CHECKPOINT_CONN
     try:
@@ -236,10 +285,14 @@ async def create_sqlite_checkpointer():
 
         CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
         _CHECKPOINT_CONN = await aiosqlite.connect(str(CHECKPOINT_PATH))
-        return AsyncSqliteSaver(_CHECKPOINT_CONN)
+        checkpointer = AsyncSqliteSaver(_CHECKPOINT_CONN)
+        await checkpointer.aget_tuple({"configurable": {"thread_id": "__startup_check__"}})
+        return checkpointer
     except Exception as exc:
-        print(f"SQLite checkpointer unavailable, using in-memory saver: {exc}")
-        return _get_checkpointer()
+        if _CHECKPOINT_CONN is not None:
+            await _CHECKPOINT_CONN.close()
+            _CHECKPOINT_CONN = None
+        raise RuntimeError("Persistent checkpoint is unavailable") from exc
 
 
 async def close_checkpoint():
@@ -273,6 +326,7 @@ def create_supervisor_graph(
     graph.add_node("fallback", fallback_agent.process)
     graph.add_node("compliance_checker", compliance_checker.process)
     graph.add_node("rewrite", rewriter.process)
+    graph.add_node("human_review", HumanReviewNode().process)
     graph.add_node("synthesize", synthesizer.process)
 
     graph.set_entry_point("supervisor_route")
@@ -287,7 +341,11 @@ def create_supervisor_graph(
     )
 
     graph.add_edge("knowledge_rag", "compliance_checker")
-    graph.add_edge("ticket_handler", "compliance_checker")
+    graph.add_conditional_edges(
+        "ticket_handler",
+        lambda state: "human_review" if state.get("pending_handoff") else "compliance_checker",
+        {"human_review": "human_review", "compliance_checker": "compliance_checker"},
+    )
     graph.add_edge("fallback", "compliance_checker")
     graph.add_conditional_edges(
         "compliance_checker",
@@ -295,6 +353,7 @@ def create_supervisor_graph(
         {"synthesize": "synthesize", "rewrite": "rewrite"},
     )
     graph.add_edge("rewrite", "compliance_checker")
+    graph.add_edge("human_review", "synthesize")
     graph.add_edge("synthesize", END)
 
     return graph.compile(
