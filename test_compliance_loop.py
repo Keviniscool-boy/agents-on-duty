@@ -7,10 +7,26 @@
 import json
 import uuid
 
+import pytest
 from langchain_core.messages import HumanMessage
 
 from agents.supervisor import MAX_COMPLIANCE_RETRIES, create_supervisor_graph
 from memory.working_memory import WorkingMemory
+
+
+@pytest.fixture(autouse=True)
+def isolate_working_memory(monkeypatch):
+    import memory.working_memory as working_memory_module
+    from storage.mysql_store import MySQLUnavailableError
+
+    class OfflineMySQL:
+        def __getattr__(self, name):
+            def unavailable(*args, **kwargs):
+                raise MySQLUnavailableError("isolated test")
+            return unavailable
+
+    monkeypatch.setenv("REDIS_URL", "")
+    monkeypatch.setattr(working_memory_module, "mysql_store", OfflineMySQL())
 
 
 class FakeMessage:

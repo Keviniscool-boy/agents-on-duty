@@ -28,6 +28,7 @@ def init_database() -> None:
                 id TEXT PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
                 created_at TEXT NOT NULL
             );
 
@@ -39,6 +40,15 @@ def init_database() -> None:
             );
             """
         )
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+        if "role" not in columns:
+            try:
+                connection.execute(
+                    "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'"
+                )
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
 
 
 def hash_password(password: str) -> str:
@@ -66,19 +76,55 @@ def create_user(username: str, password: str) -> dict:
     user_id = secrets.token_hex(16)
     created_at = datetime.now(timezone.utc).isoformat()
     with _connection() as connection:
+        role = "user"
         connection.execute(
-            "INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)",
-            (user_id, username, hash_password(password), created_at),
+            "INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, username, hash_password(password), role, created_at),
         )
-    return {"id": user_id, "username": username, "created_at": created_at}
+    return {"id": user_id, "username": username, "role": role, "created_at": created_at}
 
 
 def get_user_by_username(username: str) -> sqlite3.Row | None:
     with _connection() as connection:
         return connection.execute(
-            "SELECT id, username, password_hash, created_at FROM users WHERE username = ?",
+            "SELECT id, username, password_hash, role, created_at FROM users WHERE username = ?",
             (username,),
         ).fetchone()
+
+
+def get_user_by_id(user_id: str) -> sqlite3.Row | None:
+    with _connection() as connection:
+        return connection.execute(
+            "SELECT id, username, role, created_at FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+
+
+def set_user_role(username: str, role: str) -> sqlite3.Row | None:
+    """admin 授权入口；角色白名单由调用方校验。"""
+    with _connection() as connection:
+        connection.execute(
+            "UPDATE users SET role = ? WHERE username = ?",
+            (role, username),
+        )
+        return connection.execute(
+            "SELECT id, username, role FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+
+
+def get_usernames_by_ids(user_ids: list[str]) -> dict[str, str]:
+    """批量取用户名映射（工作台展示用；售后库与账户库分文件，不能 SQL JOIN）。"""
+    ids = [uid for uid in set(user_ids) if uid]
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    with _connection() as connection:
+        rows = connection.execute(
+            f"SELECT id, username FROM users WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+    return {row["id"]: row["username"] for row in rows}
 
 
 def save_session_owner(session_id: str, user_id: str) -> None:

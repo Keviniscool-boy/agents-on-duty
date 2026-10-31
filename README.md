@@ -19,7 +19,7 @@ _可运行的 LangGraph 客服系统：从意图路由、RAG / MCP 工具到合�
 
 ## 📖 项目介绍
 
-这是一个可运行的多 Agent 客服学习项目。用户发消息后，LangGraph 的 Supervisor 将请求分给知识库问答、订单/工单工具或兜底节点；回答经过规则和 LLM 合规检查，违规时最多重写两次，再转固定话术。React 界面通过 SSE 展示节点进度。
+这是一个可运行的多 Agent 客服学习项目。用户发消息后，LangGraph 的 Supervisor 将请求分给知识库问答、订单/工单工具或兜底节点；生成的业务回答经过规则和 LLM 合规检查，违规时最多重写两次，再转固定话术。退款等待和人工审核结果使用固定话术。React 界面通过 SSE 展示节点进度。
 
 **适合谁：**想读懂 LangGraph 状态图、RAG 与 MCP 工具调用，以及失败后如何降级的开发者。订单和物流使用仓库内 mock 数据；合规规则与样本评测用于学习和演示，不能直接作为生产风控方案。
 
@@ -86,10 +86,12 @@ docker compose up --build -d
 | 你问 | 谁来接 | 你会看到 |
 |---|---|---|
 | 「商品签收后几天内可以退货？」 | 📚 知识库 RAG | FAISS 检索 → 合规通过 |
-| 「查询订单 1001 的状态」 | 🎫 业务办理 | MCP 工具调用 → 合规检查 |
+| 「查询我的订单」 | 🎫 业务办理 | MCP 工具调用 → 合规检查 |
 | 「写一段小说」 | 💬 兜底应答 | 进入兜底节点 |
 
-订单查询用于演示工具链：MCP Server 目前对传入的订单号返回固定模拟状态；MCP 失败后的本地工具才使用 [`tools/mock_data.py`](tools/mock_data.py) 中的 `1001/1002` 数据。不要用它验证真实物流准确性。
+订单和退款申请使用按账户隔离的演示数据。询问「查询我的订单」可获取演示订单号；符合演示规则的订单可提交退款申请，申请仅进入待审核状态，不会执行真实退款。
+
+演示规则：已签收且签收不超过 7 天的订单可申请退款，商品未使用及包装完整等条件需要人工审核。每个订单只能有一个待审核申请：相同原因的重复提交返回原申请，不同原因返回冲突；撤回后可以重新申请。申请与待处理工单保存在同一 SQLite 事务中，人工审批和真实退款尚未实现。登录后可以通过订单售后页面或 `/api/orders`、`/api/refunds` 接口操作；接口细节见 [售后业务说明](docs/after-sales.md)。
 
 <details>
 <summary><b>不用 Docker，手动部署</b></summary>
@@ -115,7 +117,9 @@ flowchart TD
     S -->|"订单 / 工单"| T["ticket_handler<br/>MCP 工具调用"]
     S -->|"无关 / 危险"| F["fallback<br/>兜底应答"]
     K --> C{"compliance_checker<br/>规则 + LLM 合规检查"}
-    T --> C
+    T -->|"一般业务"| C
+    T -->|"退款申请"| H["human_review<br/>等待人工审核"]
+    H --> SYN
     F --> C
     C -->|"✓ 通过"| SYN["synthesize<br/>合成最终回答"]
     C -->|"✗ 不合规，重试 < 2 次"| R["rewrite<br/>带违规原因重写"]
@@ -137,9 +141,9 @@ flowchart TD
 | 对话历史 | Redis（30 min TTL） | MySQL → 进程内 | 短期 |
 | 路由 / 合规上下文 | Redis（24 h TTL） | MySQL → 进程内 | 会话级 |
 | 用户账户、会话归属 | SQLite | — | 永久 |
-| LangGraph 断点 | AsyncSqliteSaver | 进程内 | SQLite 可跨重启恢复；内存兜底不可 |
+| LangGraph 断点 | AsyncSqliteSaver | 启动失败 | 持久化不可用时拒绝启动 |
 | 工单幂等记录 | SQLite | — | 永久 |
-| 订单 / 物流 | MCP 固定模拟结果 | 本地 mock 表 | 演示数据不写入本服务数据库 |
+| 演示订单 / 退款申请 | SQLite | — | 按账户隔离；持久化演示数据 |
 
 - MySQL 是兜底数据源 → **硬依赖**，启动自检失败直接拒绝启动
 - Redis 是热缓存 → 运行中不可达时尝试 MySQL，再退进程内；内存兜底不跨进程或重启
@@ -160,7 +164,7 @@ api/             FastAPI：同步 chat、SSE 流式、JWT 鉴权、工具与指�
 memory/          short_term（对话）/ working_memory（路由状态）/ long_term（FAISS）
 storage/         MySQL 兜底存储层
 mcp_client/      MCP 客户端：重试 + 本地降级
-mcp_tools/       MCP Server：order_query / ticket_create / risk_check
+mcp_tools/       MCP Server：订单、退款申请和工单等演示工具
 tools/           本地备用工具 + 工单幂等存储
 auth/            JWT + SQLite 用户库
 tracing/         OpenTelemetry + Agent 指标
@@ -191,9 +195,9 @@ evaluation/      8 个端到端评测脚本 + locust 压测
 </details>
 
 <details>
-<summary><b>订单数据为什么不在系统里落库？</b></summary>
+<summary><b>演示订单数据存在哪里？</b></summary>
 <br>
-客服系统只做透传：MCP 查询 → 写进回答 → 用完即弃。订单的唯一事实源在订单系统，缓存它只会制造一致性问题。
+当前使用按账户隔离的 SQLite 演示订单和退款申请，不连接真实订单或支付系统。接入真实系统时需要以外部业务系统为事实源。
 </details>
 
 <details>
@@ -216,7 +220,7 @@ pip install -r requirements-dev.txt
 DASHSCOPE_API_KEY=dummy-key-for-ci python -m pytest -q
 ```
 
-本地复核（2026-10-26，含存储兜底修复回归）：33 passed / 1 skipped——skip 即 roundtrip 在无真实 MySQL 时的显式跳过；CI（Python 3.12 + 真实 MySQL service）中该用例真实执行。测试不发起真实 embedding 请求；运行聊天和首次建索引需要有效的 embedding 服务凭据（DashScope 或 OpenAI 兼容）。
+历史复核（2026-10-26，退款业务改动之前）：33 passed / 1 skipped，skip 为无真实 MySQL 时的 roundtrip。该结果不代表退款业务已通过验证。运行聊天和首次建索引需要有效的 embedding 服务凭据（DashScope 或 OpenAI 兼容）。
 
 | 模块 | 用例 | 验证什么 | 结果 |
 |---|---|---|---|

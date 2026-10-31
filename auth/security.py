@@ -94,4 +94,33 @@ def get_current_user(
             detail="Invalid or expired token",
         ) from exc
 
-    return {"id": user_id, "username": username}
+    # 阶段二：角色实时读库而不是信任 JWT 载荷——
+    # 授权/撤销立即生效，不等到 token 过期。
+    from auth.database import get_user_by_id
+
+    role = "user"
+    user_row = get_user_by_id(user_id)
+    if user_row is not None:
+        role = user_row["role"] or "user"
+    else:
+        # token 有效但用户已从库中删除：视为认证失效。
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+
+    return {"id": user_id, "username": username, "role": role}
+
+
+def require_role(*roles: str):
+    """阶段二：客服/管理员接口的角色门控依赖工厂。"""
+
+    def dependency(current_user: dict = Depends(get_current_user)) -> dict:
+        if current_user.get("role") not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient role",
+            )
+        return current_user
+
+    return dependency

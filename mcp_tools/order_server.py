@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from pathlib import Path
 
@@ -6,7 +7,7 @@ from mcp.server.mcpserver import MCPServer
 # MCP Inspector 按文件路径加载 Server 时，把项目根目录加入导入路径。
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.mock_data import ORDERS
+from storage.after_sales import apply_refund, get_order, list_orders
 
 from tools.ticket_store import create_or_get_ticket
 
@@ -17,7 +18,7 @@ server=MCPServer(
 
 @server.tool(
     name="order_query",
-    description="查询订单信息（mock 演示数据，仅覆盖示例单号，非真实订单系统）",
+    description="查询当前用户的演示订单",
 )
 async def order_query(
 
@@ -25,21 +26,17 @@ async def order_query(
     user_id:str = "",
     request_id: str = "",
 ) -> dict:
-    # B2：不再无视入参返回固定订单；查 mock 表并显式标注 mock，
-    # 避免把演示数据当成真实业务结果输出给用户。
-    key = order_id or "ORD-20260401-001"
-    order = dict(ORDERS.get(key, {}))
-    if not order:
-        return {
-            "order_id": key,
-            "status": "未找到",
-            "logistics": "没有找到对应订单",
-            "mock": True,
-        }
-    order.setdefault("amount", 0.0)
-    order.setdefault("product", "演示商品")
-    order.setdefault("created_at", "")
-    return {"order_id": key, **order, "mock": True}
+    return await asyncio.to_thread(get_order, user_id, order_id)
+
+
+@server.tool(name="order_list", description="列出当前用户的演示订单")
+async def order_list(user_id: str = "", request_id: str = "") -> dict:
+    return {"orders": await asyncio.to_thread(list_orders, user_id)}
+
+
+@server.tool(name="refund_apply", description="为自己的演示订单提交退款申请；需要订单号和用户提供的退款原因，不执行支付")
+async def refund_apply(order_id: str, reason: str, user_id: str = "", request_id: str = "", idempotency_key: str = "", session_id: str = "") -> dict:
+    return await asyncio.to_thread(apply_refund, user_id, order_id, reason, idempotency_key, session_id)
 
 #knowledge_search 
 #输入查询问题，返回多个知识分段

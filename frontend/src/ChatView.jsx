@@ -6,6 +6,8 @@ import {
   useState,
 } from "react";
 import { API_URL, api, logout, INTENT_CLASS, INTENT_LABELS } from "./api.js";
+import AfterSales from "./AfterSales.jsx";
+import WorkbenchPanel from "./WorkbenchPanel.jsx";
 
 function formatMeta(value, fallback = "—") {
   if (value === null || value === undefined || value === "") return fallback;
@@ -119,7 +121,9 @@ function TraceChips({ meta }) {
       <span className={`chip ${intentClass}`} title="本轮命中的 Agent">
         {intentLabel}
       </span>
-      {meta.compliance_passed ? (
+      {meta.awaiting_human ? (
+        <span className="chip info" title="等待客服审核">等待人工</span>
+      ) : meta.compliance_passed ? (
         <span className="chip pass" title="已通过合规审查">
           ✓ 合规
         </span>
@@ -141,6 +145,9 @@ export default function ChatView({ user, onLogout }) {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState("");
   const [showOps, setShowOps] = useState(false);
+  const [showAfterSales, setShowAfterSales] = useState(false);
+  const [showWorkbench, setShowWorkbench] = useState(false);
+  const isAgent = user.role === "agent" || user.role === "admin";
   const [showNav, setShowNav] = useState(false);
   const [streamStatus, setStreamStatus] = useState("");
   const messagesEndRef = useRef(null);
@@ -151,6 +158,9 @@ export default function ChatView({ user, onLogout }) {
   }, []);
 
   const loadHistory = useCallback(async (id) => {
+    setShowAfterSales(false);
+    setShowWorkbench(false);
+    setShowNav(false);
     setLoadingHistory(true);
     setError("");
     try {
@@ -230,6 +240,7 @@ export default function ChatView({ user, onLogout }) {
                   intent: data.intent,
                   compliance_passed: data.compliance_passed,
                   compliance_reason: data.compliance_reason,
+                  awaiting_human: data.awaiting_human,
                 },
               },
             ]);
@@ -250,6 +261,9 @@ export default function ChatView({ user, onLogout }) {
   }
 
   function newConversation() {
+    setShowAfterSales(false);
+    setShowWorkbench(false);
+    setShowNav(false);
     setSessionId(crypto.randomUUID());
     setMessages([]);
     setError("");
@@ -269,6 +283,20 @@ export default function ChatView({ user, onLogout }) {
           在线
         </div>
         <div className="user-menu">
+          {isAgent && (
+            <button
+              className="text-button inverse"
+              onClick={() => { setShowAfterSales(false); setShowWorkbench((v) => !v); }}
+            >
+              {showWorkbench ? "返回会话" : "客服工作台"}
+            </button>
+          )}
+          <button
+            className="text-button inverse"
+            onClick={() => { setShowWorkbench(false); setShowAfterSales((v) => !v); }}
+          >
+            {showAfterSales ? "返回会话" : "订单售后"}
+          </button>
           <button className="text-button inverse" onClick={() => setShowNav((v) => !v)}>
             会话
           </button>
@@ -326,7 +354,7 @@ export default function ChatView({ user, onLogout }) {
           </div>
         </aside>
 
-        <section className="chat-panel">
+        {showWorkbench && isAgent ? <WorkbenchPanel /> : showAfterSales ? <AfterSales /> : <section className="chat-panel">
           <div className="chat-heading">
             <div>
               <p className="eyebrow">SUPERVISOR AGENT</p>
@@ -345,8 +373,8 @@ export default function ChatView({ user, onLogout }) {
                   <button onClick={() => setInput("商品签收后几天内可以申请退货？")}>
                     退货政策
                   </button>
-                  <button onClick={() => setInput("查询订单 ORD-20260401-001")}>
-                    查询订单
+                  <button onClick={() => setInput("查询我的订单")}>
+                    我的订单
                   </button>
                   <button onClick={() => setInput("开户需要准备什么？")}>开户流程</button>
                 </div>
@@ -405,7 +433,7 @@ export default function ChatView({ user, onLogout }) {
           <p className="chat-footnote">
             回答由 Agent 生成，请以系统记录和公开政策为准
           </p>
-        </section>
+        </section>}
 
         {showOps && <OpsPanel />}
       </section>
