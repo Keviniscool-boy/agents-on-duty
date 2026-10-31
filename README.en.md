@@ -2,7 +2,7 @@
 
 # Agents on Duty
 
-_A customer-service system where every design decision can be explained — LangGraph orchestration · compliance repair loop · three-tier memory with graceful degradation_
+_A LangGraph customer-service agent with human handoff and recoverable after-sales workflows_
 
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org)
 [![LangGraph](https://img.shields.io/badge/LangGraph-orchestration-77C5A3)](https://langchain-ai.github.io/langgraph/)
@@ -19,24 +19,19 @@ _A customer-service system where every design decision can be explained — Lang
 
 ## 📖 About this project
 
-This is a runnable multi-agent customer-service learning project. A Supervisor dispatches requests to knowledge retrieval, order/ticket tools, or fallback. Generated business responses go through rules and LLM compliance checks; failed responses are rewritten up to twice before a fixed fallback. Refund waiting and human decisions use fixed messages. Order data is mocked, and the compliance checks demonstrate the architecture rather than a production policy.
+Agents on Duty is a runnable customer-service agent learning project. It answers knowledge-base questions, looks up demo orders, and accepts refund requests. When a request needs a person, the conversation pauses for a support agent and continues after their decision.
 
-Chat history and routing context prefer Redis, then MySQL, then in-process storage. The vector knowledge base uses FAISS with pluggable embeddings (DashScope native, or any OpenAI-compatible endpoint). JWT auth, login rate limiting, PII detection, ticket idempotency, SSE progress events, and OpenTelemetry metrics are also present.
+Customers can view their orders and requests. Support agents can review the handoff, ask for more information, and approve or reject a request from the workbench.
 
-The project is meant for **learning**. Start with `agents/supervisor.py`, then read `memory/` and `api/main.py`. The order and logistics tools use bundled mock data; the compliance rules and small evaluation sets need further work before production use.
+> **Demo scope:** Orders and refunds use simulated data. Approval does not execute a real refund. The knowledge base, compliance rules, and authorization need further work before production use.
 
 ## 🎯 Why it's worth reading
 
-Most Agent tutorials stop at "the demo runs". This project finishes the problems you only meet in real business — **every module maps to an engineering question you'll be asked in production or interviews**:
-
-- 🧭 **Supervisor orchestration** — intent routing with a deterministic fast path: common simple requests are classified by local regex, saving an LLM call entirely
-- 🛡️ **Compliance repair loop** — a non-compliant answer isn't just blocked; it's **rewritten with the violation reason** (≤2 retries), then degrades to a fallback script
-- 🪆 **Three-level degradation** — Redis down → MySQL; MySQL down → in-process; and MySQL itself is a hard dependency whose startup self-check refuses to boot the app — **failure semantics are explicit for every component**
-- 🎫 **Semantic idempotency** — ticket idempotency keys use "user + content fingerprint" instead of request IDs, surviving both network retries and "the user asks again"
-- 🔌 **MCP tool calls** — standard protocol into the order system, bounded retry on network errors + local fallback tools sharing the same idempotency store
-- 📡 **SSE streaming** — `graph.astream(stream_mode="updates")` maps directly onto an event stream; the frontend watches agents work step by step
-- 🔐 **Complete security stack** — JWT auth (httpOnly cookie + CSRF origin check), PBKDF2 password hashing, login rate limiting, session ownership checks, automatic PII masking
-- 📊 **Observability** — OpenTelemetry tracing + per-agent metrics, with an ops panel built into the frontend
+- **After-sales requests:** Account-scoped demo orders, refund applications, cancellation, and idempotent retries.
+- **Human workbench:** Review the request and conversation, ask for more information, approve, or reject.
+- **Pause and resume:** A chat workflow pauses for review; a failed resume can be retried from the workbench.
+- **Knowledge answers:** Answer from local documents with requested source citations and show a fallback when embeddings are unavailable.
+- **Orchestration and resilience:** Supervisor routing, compliance checks, MCP tools, storage fallback, and SSE progress.
 
 ## 🚀 Quick Start
 
@@ -50,7 +45,8 @@ cd agents-on-duty
 cp .env.example .env
 #    Edit .env — at minimum:
 #    OPENAI_API_KEY / OPENAI_BASE_URL / MODEL_NAME
-#    DASHSCOPE_API_KEY, MYSQL_PASSWORD, and JWT_SECRET_KEY
+#    Embedding credentials (DASHSCOPE_API_KEY or a compatible endpoint),
+#    MYSQL_PASSWORD, and JWT_SECRET_KEY
 #    Set FRONTEND_PORT=8081 if port 8080 is occupied
 
 # 2. Start everything
@@ -58,6 +54,18 @@ docker compose up --build -d
 
 # 3. Open http://localhost:8080 (or your FRONTEND_PORT), register, and chat
 ```
+
+### Try human handoff
+
+1. Register and sign in, then open **Orders & after-sales** to see your demo orders.
+2. Run `docker compose exec app python -m auth.bootstrap_admin <username>` and refresh the page to open the support workbench.
+3. Request a refund in chat or from the orders page, then review it in the workbench.
+
+Chat requests pause the agent workflow; requests created directly on the orders page have no chat thread to resume. See [After-sales workflow](docs/after-sales.md) for roles and recovery.
+
+## Next steps
+
+Improve administration and audit, knowledge versioning and permissions, and real business-system integration. A Pi knowledge-assistant experiment remains under consideration. See the [roadmap](docs/optimization-roadmap.md).
 
 Try these three questions and watch the agent trace chips under each reply:
 
@@ -196,20 +204,17 @@ pip install -r requirements-dev.txt
 DASHSCOPE_API_KEY=dummy-key-for-ci python -m pytest -q
 ```
 
-The 2026-10-26 local recheck predates the refund workflow and does not validate this branch.
+Automated tests cover refund rules and idempotency, human handoff and recovery, access isolation, compliance, and knowledge-base degradation. Graph tests use fake models and do not execute real refunds.
 
-| Module | Cases | What it verifies | Result |
-|---|---|---|---|
-| Compliance repair loop | 3 | Graph-level tests (FakeLLM driving the full LangGraph): pass on first try, degrade after 2 rewrites, pass after one rewrite | ✅ |
-| Ticket idempotency & rate limit | 7 | Semantic key hit/isolation, arg whitelist for LLM extras, working-memory degradation, login 429, AsyncSqliteSaver lifecycle | ✅ |
-| MCP resilience | 3 | Local tools & MCP share the idempotency store, MCP ticket idempotency | ✅ |
-| MySQL fallback & degradation | 4 | Fail-fast self-check, in-process degradation; roundtrip when MySQL is reachable | ✅ / conditional |
-| Working memory | 4 | Context read/write, history truncation, session clear, session isolation | ✅ |
-| Fallback regression | 8 | Write-through fan-out (Redis+MySQL), data readable after Redis failure, runtime SQL errors fall back, data visible after recovery, Redis fail-back, JWT secret required, degraded retrieval uses same threshold | ✅ |
-| Embedding provider | 5 | Dual-path selection (DashScope / OpenAI-compatible), auto index rebuild on identity mismatch, legacy metadata compat | ✅ |
+| Area | Main test file |
+|---|---|
+| Refund rules, isolation, idempotency | `test_after_sales.py` |
+| Human handoff, recovery, roles, concurrency | `test_human_in_the_loop.py` |
+| Embedding degradation | `test_embedding_degradation.py` |
+| Compliance and rewriting | `test_compliance_loop.py` |
 
 > [!NOTE]
-> `test_mysql_store_roundtrip` now uses an explicit `pytest.skip` when MySQL is unreachable (previously a silent `return` was counted as passed — fixed). CI starts a real MySQL service as a gate; the case must actually execute there.
+> Tests requiring MySQL explicitly skip when it is unavailable. CI starts an isolated MySQL service for those tests.
 
 <details>
 <summary><b>End-to-end evaluation</b></summary>
