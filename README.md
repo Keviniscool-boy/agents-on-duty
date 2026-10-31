@@ -19,7 +19,7 @@ _可运行的 LangGraph 客服系统：从意图路由、RAG / MCP 工具到合�
 
 ## 📖 项目介绍
 
-这是一个可运行的多 Agent 客服学习项目。用户发消息后，LangGraph 的 Supervisor 将请求分给知识库问答、订单/工单工具或兜底节点；回答经过规则和 LLM 合规检查，违规时最多重写两次，再转固定话术。React 界面通过 SSE 展示节点进度。
+这是一个可运行的多 Agent 客服学习项目。用户发消息后，LangGraph 的 Supervisor 将请求分给知识库问答、订单/工单工具或兜底节点；生成的业务回答经过规则和 LLM 合规检查，违规时最多重写两次，再转固定话术。退款等待和人工审核结果使用固定话术。React 界面通过 SSE 展示节点进度。
 
 **适合谁：**想读懂 LangGraph 状态图、RAG 与 MCP 工具调用，以及失败后如何降级的开发者。订单和物流使用仓库内 mock 数据；合规规则与样本评测用于学习和演示，不能直接作为生产风控方案。
 
@@ -115,7 +115,9 @@ flowchart TD
     S -->|"订单 / 工单"| T["ticket_handler<br/>MCP 工具调用"]
     S -->|"无关 / 危险"| F["fallback<br/>兜底应答"]
     K --> C{"compliance_checker<br/>规则 + LLM 合规检查"}
-    T --> C
+    T -->|"一般业务"| C
+    T -->|"退款申请"| H["human_review<br/>等待人工审核"]
+    H --> SYN
     F --> C
     C -->|"✓ 通过"| SYN["synthesize<br/>合成最终回答"]
     C -->|"✗ 不合规，重试 < 2 次"| R["rewrite<br/>带违规原因重写"]
@@ -137,7 +139,7 @@ flowchart TD
 | 对话历史 | Redis（30 min TTL） | MySQL → 进程内 | 短期 |
 | 路由 / 合规上下文 | Redis（24 h TTL） | MySQL → 进程内 | 会话级 |
 | 用户账户、会话归属 | SQLite | — | 永久 |
-| LangGraph 断点 | AsyncSqliteSaver | 进程内 | SQLite 可跨重启恢复；内存兜底不可 |
+| LangGraph 断点 | AsyncSqliteSaver | 启动失败 | 持久化不可用时拒绝启动 |
 | 工单幂等记录 | SQLite | — | 永久 |
 | 演示订单 / 退款申请 | SQLite | — | 按账户隔离；持久化演示数据 |
 

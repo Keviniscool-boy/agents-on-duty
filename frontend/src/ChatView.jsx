@@ -121,7 +121,9 @@ function TraceChips({ meta }) {
       <span className={`chip ${intentClass}`} title="本轮命中的 Agent">
         {intentLabel}
       </span>
-      {meta.compliance_passed ? (
+      {meta.awaiting_human ? (
+        <span className="chip info" title="等待客服审核">等待人工</span>
+      ) : meta.compliance_passed ? (
         <span className="chip pass" title="已通过合规审查">
           ✓ 合规
         </span>
@@ -238,6 +240,7 @@ export default function ChatView({ user, onLogout }) {
                   intent: data.intent,
                   compliance_passed: data.compliance_passed,
                   compliance_reason: data.compliance_reason,
+                  awaiting_human: data.awaiting_human,
                 },
               },
             ]);

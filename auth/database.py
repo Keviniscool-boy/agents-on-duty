@@ -40,24 +40,15 @@ def init_database() -> None:
             );
             """
         )
-        # 阶段二迁移：存量库补 role 列；若整库尚无管理员，
-        # 把最早的账号提升为 admin，避免无人能授权的死锁。
-        try:
-            connection.execute(
-                "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'"
-            )
-        except sqlite3.OperationalError:
-            pass
-        admin = connection.execute(
-            "SELECT 1 FROM users WHERE role = 'admin' LIMIT 1"
-        ).fetchone()
-        if not admin:
-            connection.execute(
-                """
-                UPDATE users SET role = 'admin'
-                WHERE id = (SELECT id FROM users ORDER BY created_at LIMIT 1)
-                """
-            )
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+        if "role" not in columns:
+            try:
+                connection.execute(
+                    "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'"
+                )
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
 
 
 def hash_password(password: str) -> str:
@@ -85,10 +76,7 @@ def create_user(username: str, password: str) -> dict:
     user_id = secrets.token_hex(16)
     created_at = datetime.now(timezone.utc).isoformat()
     with _connection() as connection:
-        # 阶段二：整库第一个注册的账号自动成为 admin（引导管理员），
-        # 其后注册的账号一律为普通 user，角色由 admin 显式授予。
-        existing = connection.execute("SELECT 1 FROM users LIMIT 1").fetchone()
-        role = "user" if existing else "admin"
+        role = "user"
         connection.execute(
             "INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)",
             (user_id, username, hash_password(password), role, created_at),

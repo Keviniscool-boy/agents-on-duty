@@ -167,15 +167,8 @@ class SupervisorNode:
 
 
 def route_after_compliance(state: AgentState) -> str:
-    """合规通过或重试耗尽后进入合成；否则带反馈重写。
-
-    阶段二：合规通过且本轮创建了待人工审核的售后单时，
-    先进入 human_review 暂停（interrupt），客服决定后再恢复合成。
-    合规未通过的回合不暂停——被拦截的内容没有移交价值。
-    """
+    """合规通过或重试耗尽后进入合成；否则带反馈重写。"""
     if state.get("compliance_passed", False):
-        if state.get("pending_handoff"):
-            return "human_review"
         return "synthesize"
     if state.get("compliance_retries", 0) >= MAX_COMPLIANCE_RETRIES:
         return "synthesize"
@@ -219,6 +212,7 @@ class HumanReviewNode:
             "tool_results": state.get("sub_results", {}).get(
                 "ticket_handler_tool_results", []
             ),
+            "knowledge_sources": state.get("sub_results", {}).get("knowledge_rag_context", []),
         }
         decision = interrupt(payload)
         if not isinstance(decision, dict):
@@ -281,9 +275,8 @@ def _get_checkpointer():
 async def create_sqlite_checkpointer():
     """创建 SQLite 持久化 checkpointer（必须在事件循环内调用）。
 
-    API 全部走 ainvoke/astream，必须用 AsyncSqliteSaver
-    （同步的 SqliteSaver 不支持 async 方法）。创建失败时返回
-    进程内 MemorySaver，应用不因此拒绝启动。
+    API 全部走 ainvoke/astream，必须用 AsyncSqliteSaver。
+    人工审核需要跨重启恢复，无法创建持久化检查点时应拒绝启动。
     """
     global _CHECKPOINT_CONN
     try:
@@ -292,10 +285,14 @@ async def create_sqlite_checkpointer():
 
         CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
         _CHECKPOINT_CONN = await aiosqlite.connect(str(CHECKPOINT_PATH))
-        return AsyncSqliteSaver(_CHECKPOINT_CONN)
+        checkpointer = AsyncSqliteSaver(_CHECKPOINT_CONN)
+        await checkpointer.aget_tuple({"configurable": {"thread_id": "__startup_check__"}})
+        return checkpointer
     except Exception as exc:
-        print(f"SQLite checkpointer unavailable, using in-memory saver: {exc}")
-        return _get_checkpointer()
+        if _CHECKPOINT_CONN is not None:
+            await _CHECKPOINT_CONN.close()
+            _CHECKPOINT_CONN = None
+        raise RuntimeError("Persistent checkpoint is unavailable") from exc
 
 
 async def close_checkpoint():
@@ -344,12 +341,16 @@ def create_supervisor_graph(
     )
 
     graph.add_edge("knowledge_rag", "compliance_checker")
-    graph.add_edge("ticket_handler", "compliance_checker")
+    graph.add_conditional_edges(
+        "ticket_handler",
+        lambda state: "human_review" if state.get("pending_handoff") else "compliance_checker",
+        {"human_review": "human_review", "compliance_checker": "compliance_checker"},
+    )
     graph.add_edge("fallback", "compliance_checker")
     graph.add_conditional_edges(
         "compliance_checker",
         route_after_compliance,
-        {"synthesize": "synthesize", "rewrite": "rewrite", "human_review": "human_review"},
+        {"synthesize": "synthesize", "rewrite": "rewrite"},
     )
     graph.add_edge("rewrite", "compliance_checker")
     graph.add_edge("human_review", "synthesize")

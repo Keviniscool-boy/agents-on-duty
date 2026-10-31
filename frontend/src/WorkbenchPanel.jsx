@@ -49,14 +49,10 @@ export default function WorkbenchPanel() {
         method: "POST",
         body: JSON.stringify({ action, note: note.trim() }),
       });
-      setNotice(
-        result.resumed
-          ? "已恢复流程，Agent 答复已写入客户会话。"
-          : "状态已更新（该申请没有关联的会话线程）。"
-      );
       setNote("");
       await loadList();
       await openDetail(detail.refund.id);
+      setNotice(action === "need_info" ? "已要求客户补充信息。" : result.resume_pending ? "审核已保存，会话恢复等待重试。" : result.resumed ? "流程已恢复，客户可查看答复。" : "状态已更新。");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -64,7 +60,29 @@ export default function WorkbenchPanel() {
     }
   }
 
-  const pending = detail?.thread_paused && detail.refund.status === "pending_review";
+  const pending = detail?.refund.status === "pending_review" && detail.refund.ticket_status === "pending" && (!detail.session_id || detail.thread_paused);
+
+  async function retryResume() {
+    if (busy || !detail) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api(`/api/workbench/refunds/${encodeURIComponent(detail.refund.id)}/resume`, { method: "POST" });
+      await openDetail(detail.refund.id);
+      setNotice(result.pending ? "恢复尚未完成，请稍后重试。" : "会话已恢复。");
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+
+  async function retryPreparation() {
+    if (busy || !detail) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/workbench/refunds/${encodeURIComponent(detail.refund.id)}/prepare`, { method: "POST" });
+      await openDetail(detail.refund.id);
+      setNotice("已建立人工审核暂停点。");
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
 
   return (
     <section className="after-sales" aria-label="客服工作台">
@@ -112,6 +130,27 @@ export default function WorkbenchPanel() {
               </section>
             </>
           )}
+
+          {detail.handoff?.tool_results?.length > 0 && <>
+            <h3>工具结果</h3>
+            <section className="panel-card">
+              {detail.handoff.tool_results.map((item, index) => <div key={index}>
+                <strong>{item.tool}</strong>
+                <pre className="workbench-evidence">{JSON.stringify(item.result, null, 2)}</pre>
+              </div>)}
+            </section>
+          </>}
+          {detail.handoff?.knowledge_sources?.length > 0 && <>
+            <h3>知识来源</h3>
+            <section className="panel-card">
+              {detail.handoff.knowledge_sources.map((item, index) => <p key={index}><strong>{item.source}</strong>：{item.content}</p>)}
+            </section>
+          </>}
+
+          {detail.customer_updates?.length > 0 && <><h3>客户补充</h3><section className="panel-card">{detail.customer_updates.map((update, index) => <p key={index}>{update.content}</p>)}</section></>}
+          {detail.refund.ticket_status === "processing" && <p className="muted">等待客户补充信息。</p>}
+          {detail.session_id && detail.refund.status === "pending_review" && !detail.thread_paused && <button className="text-button" disabled={busy} onClick={retryPreparation}>重试建立人工审核</button>}
+          {detail.handoff_event && detail.handoff_event.status !== "done" && <button className="text-button" disabled={busy} onClick={retryResume}>重试会话恢复</button>}
 
           {pending && (
             <>

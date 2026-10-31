@@ -1,9 +1,12 @@
+import asyncio
 import json
+import logging
 import os
 import time
 import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -50,12 +53,23 @@ from storage.mysql_store import mysql_store
 from storage.after_sales import (
     apply_refund,
     cancel_refund,
+    claim_handoff,
+    claim_session_turn,
+    finish_handoff,
+    get_handoff,
     get_order,
     get_refund_review,
+    has_pending_handoff,
+    has_pending_refund,
     list_orders,
     list_refund_actions,
     list_refund_reviews,
     list_refunds,
+    list_customer_updates,
+    list_handoff_messages,
+    provide_refund_information,
+    release_handoff,
+    release_session_turn,
     record_refund_decision,
 )
 from tracing.otel_config import get_metrics, init_tracer, trace_agent_call
@@ -69,6 +83,7 @@ short_term_memory = ShortTermMemory()
 long_term_memory = LongTermMemory()
 mcp_client = MCPClient(str(PROJECT_ROOT / "mcp_tools" / "order_server.py"))
 graph: Any = None
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -201,6 +216,10 @@ class DecisionRequest(BaseModel):
     note: str = ""
 
 
+class RefundInformationRequest(BaseModel):
+    content: str
+
+
 class RoleGrantRequest(BaseModel):
     username: str
     role: str
@@ -304,6 +323,10 @@ async def call_tool(
     if request.name not in {"order_query", "order_list", "refund_apply", "ticket_create", "knowledge_search", "risk_check"}:
         raise HTTPException(status_code=400, detail="Unsupported tool")
     arguments = dict(request.arguments)
+    if request.name == "refund_apply" and arguments.get("session_id"):
+        raise HTTPException(status_code=400, detail="Session is assigned by the server")
+    if request.name == "refund_apply":
+        arguments.pop("session_id", None)
     if request.name in {"order_query", "order_list", "refund_apply", "risk_check"}:
         arguments["user_id"] = current_user["id"]
     if request.name == "ticket_create":
@@ -341,40 +364,90 @@ def refunds(current_user: dict = Depends(get_current_user)):
 def create_refund(request: RefundRequest, idempotency_key: str = Header(default="", alias="Idempotency-Key"), current_user: dict = Depends(get_current_user)):
     result = apply_refund(current_user["id"], request.order_id, request.reason, idempotency_key)
     if "error" in result:
-        code = 404 if result["error"] == "order_not_found" else 409 if result["error"] in {"refund_exists", "idempotency_conflict"} else 400
+        code = 404 if result["error"] == "order_not_found" else 409 if result["error"] in {"refund_exists", "idempotency_conflict", "already_approved", "session_busy"} else 400
         raise HTTPException(status_code=code, detail=result)
     return result
 
 
 @app.post("/api/refunds/{refund_id}/cancel")
-def cancel_refund_request(refund_id: str, current_user: dict = Depends(get_current_user)):
-    result = cancel_refund(current_user["id"], refund_id)
+async def cancel_refund_request(refund_id: str, current_user: dict = Depends(get_current_user)):
+    result = await asyncio.to_thread(cancel_refund, current_user["id"], refund_id)
     if "error" in result:
         code = 404 if result["error"] == "refund_not_found" else 409
+        raise HTTPException(status_code=code, detail=result)
+    if result.get("session_id"):
+        resume = await _resume_handoff(refund_id)
+        result["resume_pending"] = resume["pending"]
+    return result
+
+
+@app.post("/api/refunds/{refund_id}/information")
+def add_refund_information(refund_id: str, request: RefundInformationRequest, current_user: dict = Depends(get_current_user)):
+    result = provide_refund_information(current_user["id"], refund_id, request.content)
+    if "error" in result:
+        code = 404 if result["error"] == "refund_not_found" else 409 if result["error"] == "invalid_state" else 400
         raise HTTPException(status_code=code, detail=result)
     return result
 
 
-async def _resume_handoff(session_id: str, decision: dict, owner_user_id: str) -> dict:
-    """阶段二：恢复被 human_review 暂停的线程；未暂停时为 no-op。
+async def _resume_handoff(refund_id: str) -> dict:
+    """Resume only a matching checkpoint; failures leave a durable retry record."""
+    event = await asyncio.to_thread(claim_handoff, refund_id)
+    if not event:
+        return {"resumed": False, "response": "", "pending": False}
+    if event["status"] == "done":
+        return {"resumed": True, "response": event["response"], "pending": False}
+    if event.get("error"):
+        return {"resumed": False, "response": "", "pending": True}
+    token = event["claimed_at"]
+    session_token = uuid.uuid4().hex
+    session_locked = False
+    try:
+        if graph is None or not user_owns_session(event["session_id"], event["user_id"]):
+            raise RuntimeError("Session unavailable or owner mismatch")
+        session_locked = await asyncio.to_thread(claim_session_turn, event["session_id"], session_token)
+        if not session_locked:
+            raise RuntimeError("Session is busy")
+        config = {"configurable": {"thread_id": event["session_id"]}}
+        state = await graph.aget_state(config)
+        values = state.values or {}
+        handoff = values.get("pending_handoff") or {}
+        if values.get("user_id") != event["user_id"] or handoff.get("refund_id") != refund_id:
+            raise RuntimeError("Checkpoint does not match refund")
+        interrupts = [item for task in state.tasks for item in task.interrupts]
+        if interrupts:
+            if not any(isinstance(item.value, dict) and item.value.get("refund_id") == refund_id and item.value.get("user_id") == event["user_id"] for item in interrupts):
+                raise RuntimeError("Interrupt does not match refund")
+            decision = {"action": event["action"], "note": event["note"], "operator": event["operator"]}
+            result = await asyncio.wait_for(graph.ainvoke(Command(resume=decision), config=config), timeout=120)
+        else:
+            if (values.get("handoff_decision") or {}).get("action") != event["action"]:
+                raise RuntimeError("Checkpoint has no matching decision")
+            result = await asyncio.wait_for(graph.ainvoke(None, config=config), timeout=120) if state.next else values
+        response = result.get("final_response") or "人工审核已完成。"
+        if not await asyncio.to_thread(finish_handoff, event["id"], token, response):
+            raise RuntimeError("Resume lease expired")
+        return {"resumed": True, "response": response, "pending": False}
+    except Exception as exc:
+        await asyncio.to_thread(release_handoff, event["id"], token)
+        logger.warning("Handoff resume deferred (%s)", type(exc).__name__)
+        return {"resumed": False, "response": "", "pending": True}
+    finally:
+        if session_locked:
+            await asyncio.to_thread(release_session_turn, event["session_id"], session_token)
 
-    幂等保护双保险：决定写入前的状态机守卫挡住重复审批，
-    这里的 interrupts 检查挡住对非暂停线程的误恢复。
-    恢复产生的最终答复写入客户会话历史，客户侧立即可见。
-    """
-    config = {"configurable": {"thread_id": session_id}}
-    if graph is None:
-        # 图未初始化（测试或降级场景）：决定已落库，无线程可恢复。
-        return {"resumed": False, "response": ""}
-    state = await graph.aget_state(config)
-    if not any(task.interrupts for task in state.tasks):
-        return {"resumed": False, "response": ""}
-    result = await graph.ainvoke(Command(resume=decision), config=config)
-    response = result.get("final_response") or "人工审核已完成。"
-    await short_term_memory.add_message(
-        session_id, "assistant", response, user_id=owner_user_id
-    )
-    return {"resumed": True, "response": response}
+
+async def _session_history(session_id: str, user_id: str, last_n: int | None = None):
+    history = await short_term_memory.get_history(session_id)
+    notices = await asyncio.to_thread(list_handoff_messages, session_id, user_id)
+    combined = [*history, *notices]
+    def timestamp(item):
+        try:
+            return datetime.fromisoformat(item.get("timestamp", "")).timestamp()
+        except (ValueError, TypeError, OSError):
+            return 0
+    combined.sort(key=timestamp)
+    return combined[-last_n:] if last_n else combined
 
 
 @app.get("/api/workbench/refunds")
@@ -393,28 +466,34 @@ async def workbench_refund_detail(
     客服可以查看处于售后流程中的会话内容，这是显式授权的越权；
     普通用户访问工作台一律 403，既有 user_owns_session 语义不受影响。
     """
-    review = get_refund_review(refund_id)
+    review = await asyncio.to_thread(get_refund_review, refund_id)
     if review is None:
         raise HTTPException(status_code=404, detail={"error": "refund_not_found", "message": "退款申请不存在"})
     session_id = review.get("session_id") or ""
+    if session_id and not user_owns_session(session_id, review["user_id"]):
+        raise HTTPException(status_code=409, detail={"error": "session_mismatch", "message": "申请关联的会话无效"})
     thread_paused = False
     handoff_payload = None
     if session_id and graph is not None:
         config = {"configurable": {"thread_id": session_id}}
         state = await graph.aget_state(config)
         for task in state.tasks:
-            if task.interrupts:
-                thread_paused = True
-                handoff_payload = task.interrupts[0].value
-                break
-    history = await short_term_memory.get_history(session_id) if session_id else []
+            for item in task.interrupts:
+                payload = item.value
+                if isinstance(payload, dict) and payload.get("refund_id") == refund_id and payload.get("user_id") == review["user_id"]:
+                    thread_paused = True
+                    handoff_payload = payload
+                    break
+    history = await _session_history(session_id, review["user_id"]) if session_id else []
     return {
         "refund": review,
         "session_id": session_id,
         "thread_paused": thread_paused,
         "handoff": handoff_payload,
         "history": history,
-        "actions": list_refund_actions(refund_id),
+        "actions": await asyncio.to_thread(list_refund_actions, refund_id),
+        "customer_updates": await asyncio.to_thread(list_customer_updates, refund_id),
+        "handoff_event": await asyncio.to_thread(get_handoff, refund_id),
     }
 
 
@@ -430,31 +509,89 @@ async def decide_refund(
     if request.action == "need_info" and not request.note.strip():
         raise HTTPException(status_code=400, detail={"error": "note_required", "message": "要求补充信息时必须填写追问内容"})
 
-    review = get_refund_review(refund_id)
+    review = await asyncio.to_thread(get_refund_review, refund_id)
     if review is None:
         raise HTTPException(status_code=404, detail={"error": "refund_not_found", "message": "退款申请不存在"})
 
-    result = record_refund_decision(refund_id, request.action, request.note, operator["id"])
+    if review.get("session_id") and not user_owns_session(review["session_id"], review["user_id"]):
+        raise HTTPException(status_code=409, detail={"error": "session_mismatch", "message": "申请关联的会话无效"})
+    if review.get("session_id") and review["status"] == "pending_review":
+        if graph is None:
+            raise HTTPException(status_code=503, detail="人工审核流程暂不可用")
+        state = await graph.aget_state({"configurable": {"thread_id": review["session_id"]}})
+        matches = [item.value for task in state.tasks for item in task.interrupts
+                   if isinstance(item.value, dict) and item.value.get("refund_id") == refund_id
+                   and item.value.get("user_id") == review["user_id"]]
+        if not matches or (state.values or {}).get("user_id") != review["user_id"]:
+            raise HTTPException(status_code=409, detail={"error": "handoff_not_ready", "message": "申请尚未关联有效的暂停流程"})
+    result = await asyncio.to_thread(record_refund_decision, refund_id, request.action, request.note, operator["id"], operator["username"])
     if "error" in result:
         code = 404 if result["error"] == "refund_not_found" else 409 if result["error"] == "invalid_state" else 400
         raise HTTPException(status_code=code, detail=result)
 
-    decision = {
-        "action": request.action,
-        "note": request.note.strip()[:500],
-        "operator": operator["username"],
-    }
-    resumed = {"resumed": False, "response": ""}
+    resumed = {"resumed": False, "response": "", "pending": False}
     session_id = review.get("session_id") or ""
-    if session_id:
-        resumed = await _resume_handoff(session_id, decision, review["user_id"])
+    if session_id and request.action != "need_info":
+        resumed = await _resume_handoff(refund_id)
 
     return {
         "refund": result,
         "resumed": resumed["resumed"],
         "agent_response": resumed["response"],
-        "actions": list_refund_actions(refund_id),
+        "resume_pending": resumed["pending"],
+        "actions": await asyncio.to_thread(list_refund_actions, refund_id),
     }
+
+
+@app.post("/api/workbench/refunds/{refund_id}/resume")
+async def retry_refund_resume(refund_id: str, operator: dict = Depends(require_role("agent", "admin"))):
+    if await asyncio.to_thread(get_refund_review, refund_id) is None:
+        raise HTTPException(status_code=404, detail="退款申请不存在")
+    return await _resume_handoff(refund_id)
+
+
+@app.post("/api/workbench/refunds/{refund_id}/prepare")
+async def retry_handoff_preparation(refund_id: str, operator: dict = Depends(require_role("agent", "admin"))):
+    """Rebuild the pause only when a committed refund's ticket node was interrupted."""
+    review = await asyncio.to_thread(get_refund_review, refund_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="退款申请不存在")
+    session_id = review.get("session_id") or ""
+    if review["status"] != "pending_review" or not session_id or not user_owns_session(session_id, review["user_id"]):
+        raise HTTPException(status_code=409, detail="申请没有可恢复的会话")
+    if graph is None:
+        raise HTTPException(status_code=503, detail="人工审核流程暂不可用")
+    token = uuid.uuid4().hex
+    if not await asyncio.to_thread(claim_session_turn, session_id, token):
+        raise HTTPException(status_code=409, detail="会话正在处理中，请稍后重试")
+    try:
+        config = {"configurable": {"thread_id": session_id}}
+        state = await graph.aget_state(config)
+        if (state.values or {}).get("user_id") != review["user_id"]:
+            raise HTTPException(status_code=409, detail="检查点用户不匹配")
+        interrupts = [item for task in state.tasks for item in task.interrupts]
+        if interrupts:
+            if any(isinstance(item.value, dict) and item.value.get("refund_id") == refund_id and item.value.get("user_id") == review["user_id"] for item in interrupts):
+                return {"prepared": True, "reused": True}
+            raise HTTPException(status_code=409, detail="会话暂停点属于其他申请")
+        if state.next != ("ticket_handler",):
+            raise HTTPException(status_code=409, detail="当前检查点不能安全恢复人工审核")
+        handoff = {"refund_id": refund_id, "ticket_id": review["ticket_id"], "order_id": review["order_id"], "reason": review["reason"]}
+        details = dict(state.values.get("sub_results") or {})
+        details["ticket_handler_tool_results"] = [{"tool": "refund_apply", "result": {**handoff, "status": "pending_review"}}]
+        await graph.aupdate_state(config, {
+            "pending_handoff": handoff,
+            "final_response": "您的退款申请已提交人工审核，客服处理后将继续为您跟进。",
+            "compliance_passed": False,
+            "compliance_reason": "固定系统等待话术",
+            "sub_results": details,
+        }, as_node="ticket_handler")
+        result = await asyncio.wait_for(graph.ainvoke(None, config=config), timeout=120)
+        if not result.get("__interrupt__"):
+            raise HTTPException(status_code=409, detail="未能建立人工审核暂停点")
+        return {"prepared": True, "reused": False}
+    finally:
+        await asyncio.to_thread(release_session_turn, session_id, token)
 
 
 @app.post("/api/admin/users/role")
@@ -487,7 +624,17 @@ async def _prepare_chat(
     ):
         raise HTTPException(status_code=403, detail="Session does not belong to user")
     save_session_owner(session_id, current_user["id"])
-    history = await short_term_memory.get_history(session_id)
+    if not user_owns_session(session_id, current_user["id"]):
+        raise HTTPException(status_code=403, detail="Session does not belong to user")
+    config = {"configurable": {"thread_id": session_id}}
+    if await asyncio.to_thread(has_pending_handoff, session_id, current_user["id"]):
+        raise HTTPException(status_code=409, detail="人工审核结果正在恢复，请稍后重试")
+    if await asyncio.to_thread(has_pending_refund, session_id, current_user["id"]):
+        raise HTTPException(status_code=409, detail="会话正在等待人工审核，请在订单售后页面补充信息或撤回申请")
+    state = await graph.aget_state(config)
+    if any(task.interrupts for task in state.tasks):
+        raise HTTPException(status_code=409, detail="会话正在等待人工审核，请在订单售后页面补充信息或撤回申请")
+    history = await _session_history(session_id, current_user["id"])
     history_messages = []
 
     for message in history:
@@ -512,7 +659,6 @@ async def _prepare_chat(
         "pending_handoff": {},
         "handoff_decision": {},
     }
-    config = {"configurable": {"thread_id": session_id}}
     return session_id, initial_state, config
 
 
@@ -569,10 +715,21 @@ async def chat(
     request: ChatRequest,
     current_user: dict = Depends(get_current_user),
 ):
+    request.session_id = request.session_id or str(uuid.uuid4())
+    token = uuid.uuid4().hex
+    if not await asyncio.to_thread(claim_session_turn, request.session_id, token):
+        raise HTTPException(status_code=409, detail="会话正在处理其他请求，请稍后重试")
+    try:
+        return await _chat_locked(request, current_user)
+    finally:
+        await asyncio.to_thread(release_session_turn, request.session_id, token)
+
+
+async def _chat_locked(request: ChatRequest, current_user: dict):
     session_id, initial_state, config = await _prepare_chat(request, current_user)
 
     try:
-        result = await graph.ainvoke(initial_state, config=config)
+        result = await asyncio.wait_for(graph.ainvoke(initial_state, config=config), timeout=120)
     except Exception as exc:
         raise HTTPException(
             status_code=500,
@@ -611,7 +768,15 @@ async def chat_stream(
     current_user: dict = Depends(get_current_user),
 ):
     """SSE 流式聊天：实时推送 Agent 处理阶段，最后给 final 事件。"""
-    session_id, initial_state, config = await _prepare_chat(request, current_user)
+    request.session_id = request.session_id or str(uuid.uuid4())
+    token = uuid.uuid4().hex
+    if not await asyncio.to_thread(claim_session_turn, request.session_id, token):
+        raise HTTPException(status_code=409, detail="会话正在处理其他请求，请稍后重试")
+    try:
+        session_id, initial_state, config = await _prepare_chat(request, current_user)
+    except BaseException:
+        await asyncio.to_thread(release_session_turn, request.session_id, token)
+        raise
 
     async def event_stream():
         yield _sse({"event": "session", "session_id": session_id})
@@ -674,8 +839,27 @@ async def chat_stream(
         )
         yield _sse({"event": "final", **chat_response.model_dump()})
 
+    async def locked_stream():
+        stream = event_stream()
+        deadline = asyncio.get_running_loop().time() + 120
+        try:
+            while True:
+                remaining = max(0, deadline - asyncio.get_running_loop().time())
+                try:
+                    event = await asyncio.wait_for(stream.__anext__(), timeout=remaining)
+                except StopAsyncIteration:
+                    break
+                yield event
+        except asyncio.TimeoutError:
+            yield _sse({"event": "error", "message": "Agent processing timed out"})
+        finally:
+            try:
+                await stream.aclose()
+            finally:
+                await asyncio.to_thread(release_session_turn, session_id, token)
+
     return StreamingResponse(
-        event_stream(),
+        locked_stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -688,7 +872,7 @@ async def get_history(
 ):
     if not user_owns_session(session_id, current_user["id"]):
         raise HTTPException(status_code=403, detail="Session does not belong to user")
-    history = await short_term_memory.get_history(session_id)
+    history = await _session_history(session_id, current_user["id"])
     return {"session_id": session_id, "messages": history}
 
 

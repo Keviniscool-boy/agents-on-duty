@@ -3,7 +3,7 @@ import hashlib
 import json
 import uuid
 
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from mcp_client.client import MCPClient
@@ -140,8 +140,8 @@ class TicketHandlerAgent:
                     "description": tool.description or "",
                     "parameters": {
                         **tool.input_schema,
-                        "properties": {k: v for k, v in tool.input_schema.get("properties", {}).items() if k not in {"user_id", "request_id", "idempotency_key"}},
-                        "required": [k for k in tool.input_schema.get("required", []) if k not in {"user_id", "request_id", "idempotency_key"}],
+                        "properties": {k: v for k, v in tool.input_schema.get("properties", {}).items() if k not in {"user_id", "request_id", "idempotency_key", "session_id"}},
+                        "required": [k for k in tool.input_schema.get("required", []) if k not in {"user_id", "request_id", "idempotency_key", "session_id"}],
                     },
                 },
             }
@@ -228,15 +228,13 @@ class TicketHandlerAgent:
             messages.append(tool_message)
             tool_messages.append(tool_message)
 
-        # 第二次调用把 MCP 工具结果交给 LLM，生成面向用户的回答。
-        final_response = await llm_with_tools.ainvoke(messages)
-
         # 阶段二：本轮创建了待人工审核的退款单 → 触发 human_review 暂停。
         # 无命中时必须显式清空，防止同线程上一轮的暂停信号残留误触发。
         pending_handoff = {}
         for entry in tool_results:
             result = entry.get("result") or {}
-            if entry.get("tool") == "refund_apply" and result.get("status") == "pending_review":
+            if (entry.get("tool") == "refund_apply" and result.get("status") == "pending_review"
+                    and result.get("session_id") == state.get("session_id")):
                 pending_handoff = {
                     "refund_id": result.get("id", ""),
                     "ticket_id": result.get("ticket_id", ""),
@@ -245,10 +243,18 @@ class TicketHandlerAgent:
                 }
                 break
 
+        # Once the request exists, reach the durable interrupt without another
+        # model call that could fail and strand the request.
+        final_response = (
+            AIMessage(content="您的退款申请已提交人工审核，客服处理后将继续为您跟进。")
+            if pending_handoff else await llm_with_tools.ainvoke(messages)
+        )
+
         return {
             "messages": [response, *tool_messages, final_response],
             "final_response": final_response.content,
             "pending_handoff": pending_handoff,
+            **({"compliance_passed": False, "compliance_reason": "固定系统等待话术，未执行模型审查"} if pending_handoff else {}),
             "sub_results": {
                 **state.get("sub_results", {}),
                 "ticket_handler": final_response.content,

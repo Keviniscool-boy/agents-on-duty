@@ -19,7 +19,7 @@ _A customer-service system where every design decision can be explained — Lang
 
 ## 📖 About this project
 
-This is a runnable multi-agent customer-service learning project. A Supervisor dispatches requests to knowledge retrieval, order/ticket tools, or fallback. Responses go through rules and LLM compliance checks; failed responses are rewritten up to twice before a fixed fallback. Order data is mocked, and the compliance checks demonstrate the architecture rather than a production policy.
+This is a runnable multi-agent customer-service learning project. A Supervisor dispatches requests to knowledge retrieval, order/ticket tools, or fallback. Generated business responses go through rules and LLM compliance checks; failed responses are rewritten up to twice before a fixed fallback. Refund waiting and human decisions use fixed messages. Order data is mocked, and the compliance checks demonstrate the architecture rather than a production policy.
 
 Chat history and routing context prefer Redis, then MySQL, then in-process storage. The vector knowledge base uses FAISS with pluggable embeddings (DashScope native, or any OpenAI-compatible endpoint). JWT auth, login rate limiting, PII detection, ticket idempotency, SSE progress events, and OpenTelemetry metrics are also present.
 
@@ -93,7 +93,9 @@ flowchart TD
     S -->|"order / ticket"| T["ticket_handler<br/>MCP tool calls"]
     S -->|"off-topic / unsafe"| F["fallback<br/>canned reply"]
     K --> C{"compliance_checker<br/>rules + LLM review"}
-    T --> C
+    T -->|"ordinary requests"| C
+    T -->|"refund review"| H["human_review<br/>human decision"]
+    H --> SYN
     F --> C
     C -->|"✓ pass"| SYN["synthesize<br/>final answer"]
     C -->|"✗ fail, retries < 2"| R["rewrite<br/>with violation reason"]
@@ -115,7 +117,7 @@ flowchart TD
 | Chat history | Redis (30 min TTL) | MySQL → in-process | short-term |
 | Routing / compliance context | Redis (24 h TTL) | MySQL → in-process | per-session |
 | Users, session ownership | SQLite | — | permanent |
-| LangGraph checkpoints | AsyncSqliteSaver | in-process | permanent, survives restarts |
+| LangGraph checkpoints | AsyncSqliteSaver | startup fails | Persisted to SQLite |
 | Ticket idempotency | SQLite | — | permanent |
 | Demo orders / refund requests | SQLite | — | Account-scoped demo records |
 
