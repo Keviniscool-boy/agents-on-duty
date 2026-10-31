@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi import Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -44,6 +44,7 @@ from memory.long_term import LongTermMemory
 from memory.short_term import ShortTermMemory
 from memory.working_memory import WorkingMemory
 from storage.mysql_store import mysql_store
+from storage.after_sales import apply_refund, cancel_refund, get_order, list_orders, list_refunds
 from tracing.otel_config import get_metrics, init_tracer, trace_agent_call
 
 
@@ -158,6 +159,11 @@ class ToolCallRequest(BaseModel):
     arguments: dict = {}
 
 
+class RefundRequest(BaseModel):
+    order_id: str
+    reason: str
+
+
 class AuthRequest(BaseModel):
     username: str
     password: str
@@ -268,11 +274,58 @@ async def call_tool(
     current_user: dict = Depends(get_current_user),
 ):
     """调用 MCP 工具，仅允许已登录用户调用。"""
+    if request.name not in {"order_query", "order_list", "refund_apply", "ticket_create", "knowledge_search", "risk_check"}:
+        raise HTTPException(status_code=400, detail="Unsupported tool")
+    arguments = dict(request.arguments)
+    if request.name in {"order_query", "order_list", "refund_apply", "risk_check"}:
+        arguments["user_id"] = current_user["id"]
+    if request.name == "ticket_create":
+        from agents.ticket_handler import TicketHandlerAgent
+
+        arguments["idempotency_key"] = TicketHandlerAgent.build_idempotency_key(
+            current_user["id"], arguments
+        )
     result = await mcp_server.call_tool(
         name=request.name,
-        arguments=request.arguments,
+        arguments=arguments,
     )
     return result.model_dump()
+
+
+@app.get("/api/orders")
+def orders(current_user: dict = Depends(get_current_user)):
+    return {"orders": list_orders(current_user["id"])}
+
+
+@app.get("/api/orders/{order_id}")
+def order_detail(order_id: str, current_user: dict = Depends(get_current_user)):
+    result = get_order(current_user["id"], order_id)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result)
+    return result
+
+
+@app.get("/api/refunds")
+def refunds(current_user: dict = Depends(get_current_user)):
+    return {"refunds": list_refunds(current_user["id"])}
+
+
+@app.post("/api/refunds")
+def create_refund(request: RefundRequest, idempotency_key: str = Header(default="", alias="Idempotency-Key"), current_user: dict = Depends(get_current_user)):
+    result = apply_refund(current_user["id"], request.order_id, request.reason, idempotency_key)
+    if "error" in result:
+        code = 404 if result["error"] == "order_not_found" else 409 if result["error"] in {"refund_exists", "idempotency_conflict"} else 400
+        raise HTTPException(status_code=code, detail=result)
+    return result
+
+
+@app.post("/api/refunds/{refund_id}/cancel")
+def cancel_refund_request(refund_id: str, current_user: dict = Depends(get_current_user)):
+    result = cancel_refund(current_user["id"], refund_id)
+    if "error" in result:
+        code = 404 if result["error"] == "refund_not_found" else 409
+        raise HTTPException(status_code=code, detail=result)
+    return result
 
 
 async def _prepare_chat(

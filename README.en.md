@@ -64,10 +64,10 @@ Try these three questions and watch the agent trace chips under each reply:
 | You ask | Who answers | What you see |
 |---|---|---|
 | "How many days after delivery can I return an item?" | 📚 Knowledge RAG | FAISS retrieval → compliance pass |
-| "Check the status of order 1001" | 🎫 Ticket handler | MCP tool call → compliance check |
+| "Show my orders" | 🎫 Ticket handler | MCP tool call → compliance check |
 | "Write me a novel" | 💬 Fallback | polite refusal |
 
-The MCP order tool currently returns a fixed mock status for any supplied order ID. Only its local fallback uses the `1001/1002` entries in [`tools/mock_data.py`](tools/mock_data.py); neither path verifies real logistics data.
+Each account receives isolated demo orders. Eligible orders can be submitted for review as refund requests; no real payment or refund is performed.
 
 <details>
 <summary><b>Manual setup without Docker</b></summary>
@@ -117,7 +117,7 @@ flowchart TD
 | Users, session ownership | SQLite | — | permanent |
 | LangGraph checkpoints | AsyncSqliteSaver | in-process | permanent, survives restarts |
 | Ticket idempotency | SQLite | — | permanent |
-| Orders / logistics | **not stored** — queried live via MCP | — | lives in the order system |
+| Demo orders / refund requests | SQLite | — | Account-scoped demo records |
 
 - MySQL is the system of record → **hard dependency**; startup self-check fails → the app refuses to boot
 - Redis is a hot cache → going down **only makes it slower**, no downtime
@@ -169,9 +169,9 @@ A real bug we hit: every API goes through <code>ainvoke</code>/<code>astream</co
 </details>
 
 <details>
-<summary><b>Why aren't orders persisted in this system?</b></summary>
+<summary><b>Where are demo orders stored?</b></summary>
 <br>
-The CS system is a pass-through: query via MCP, put the result in the answer, drop it. The order system is the single source of truth; caching orders here only creates consistency problems.
+Demo orders and refund requests are stored in SQLite. A real integration should treat the external order system as the source of truth.
 </details>
 
 <details>
@@ -194,7 +194,7 @@ pip install -r requirements-dev.txt
 DASHSCOPE_API_KEY=dummy-key-for-ci python -m pytest -q
 ```
 
-Local recheck on 2026-10-26 (including storage-fallback regression): 33 passed / 1 skipped — the skip is the roundtrip case without a real MySQL; in CI (Python 3.12 + real MySQL service) it executes for real.
+The 2026-10-26 local recheck predates the refund workflow and does not validate this branch.
 
 | Module | Cases | What it verifies | Result |
 |---|---|---|---|

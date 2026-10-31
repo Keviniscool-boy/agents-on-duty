@@ -78,7 +78,7 @@ class SupervisorNode:
 
         # 订单号或明确的查询/工单动作应交给业务工具 Agent。
         has_order_id = re.search(r"(?:ord[-_]?\w+|订单号?\s*[A-Za-z0-9_-]+)", text)
-        ticket_terms = ("创建工单", "提交工单", "订单状态", "查询物流", "物流查询")
+        ticket_terms = ("创建工单", "提交工单", "订单状态", "查询物流", "物流查询", "申请退款", "我要退款", "帮我退款", "退货申请", "我的订单")
         if has_order_id or any(term in text for term in ticket_terms):
             return "ticket_handler"
 
@@ -129,7 +129,7 @@ class SupervisorNode:
                 "你是客服系统的路由器。\n"
                 "只能返回以下三个标签之一，且只能返回标签本身：\n"
                 "- knowledge_rag：产品政策、退款、开户、物流说明等知识库问题\n"
-                "- ticket_handler：查询订单、创建工单、需要业务系统处理的问题\n"
+                "- ticket_handler：查询订单、申请退款、创建工单等需要业务系统处理的问题\n"
                 "- fallback：无关、不支持、危险或索取系统内部信息的问题\n"
                 "例如：\n"
                 "产品退款条件 -> knowledge_rag\n"

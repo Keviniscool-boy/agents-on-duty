@@ -7,6 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from mcp_client.client import MCPClient
+from storage.after_sales import list_orders
 
 
 SERVER_PATH = PROJECT_ROOT / "mcp_tools" / "order_server.py"
@@ -43,14 +44,16 @@ async def main() -> None:
             "actual": tool_names,
         })
 
+        eval_user = "mcp-evaluation-user"
+        order_id = list_orders(eval_user)[0]["order_id"]
         order = await client.call_tool(
             "order_query",
-            {"order_id": "ORD-20260401-001"},
+            {"order_id": order_id, "user_id": eval_user},
         )
         order_text = text_content(order)
         results.append({
             "case": "order_query",
-            "passed": "ORD-20260401-001" in order_text and "shipped" in order_text,
+            "passed": order_id in order_text and "delivered" in order_text,
             "actual": order_text,
         })
 

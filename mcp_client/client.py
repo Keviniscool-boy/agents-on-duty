@@ -1,4 +1,5 @@
 import sys
+import os
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
@@ -6,6 +7,7 @@ from typing import Any
 from mcp import ClientSession
 from mcp.client.stdio import (
     StdioServerParameters,
+    get_default_environment,
     stdio_client,
 )
 
@@ -23,10 +25,14 @@ class MCPClient:
 
     async def connect(self) -> None:
         """启动 MCP Server，并完成 Client 初始化。"""
+        env = get_default_environment()
+        if os.environ.get("AFTER_SALES_DB_PATH"):
+            env["AFTER_SALES_DB_PATH"] = os.environ["AFTER_SALES_DB_PATH"]
         server_params = StdioServerParameters(
             command=sys.executable,
             args=[str(self.server_path)],
             cwd=str(self.project_root),
+            env=env,
         )
 
         read_stream, write_stream = (
