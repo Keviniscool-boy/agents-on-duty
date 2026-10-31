@@ -1,7 +1,7 @@
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from memory.long_term import LongTermMemory
+from memory.long_term import EmbeddingUnavailable, LongTermMemory
 from tracing.otel_config import trace_agent_call
 
 
@@ -32,11 +32,23 @@ class KnowledgeRAGAgent:
 
         # 按原项目流程：先把用户问题改写成更适合向量检索的查询。
         search_query = await self.rewrite_query(user_message)
-        raw_results = await self.long_term_memory.search(
-            search_query,
-            top_k=5,
-            min_score=0.55,
-        )
+        try:
+            raw_results = await self.long_term_memory.search(
+                search_query,
+                top_k=5,
+                min_score=0.55,
+            )
+        except EmbeddingUnavailable:
+            message = "知识库检索暂时不可用，请稍后再试或联系人工客服。"
+            return {
+                "final_response": message,
+                "sub_results": {
+                    **state.get("sub_results", {}),
+                    "knowledge_rag": message,
+                    "sources": [],
+                    "knowledge_error": "embedding_unavailable",
+                },
+            }
 
         # 再由 LLM 对 Top5 候选进行相关性重排序，最终只保留 Top3。
         results = await self.rerank_documents(
