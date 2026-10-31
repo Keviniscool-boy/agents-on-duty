@@ -7,8 +7,10 @@ from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from mcp_client.client import MCPClient
+from mcp_tools.order_server import server as local_mcp_server
 from tools.order import order_query
 from tools.ticket import ticket_create
+from storage.after_sales import apply_refund, list_orders
 from tracing.otel_config import trace_agent_call
 
 
@@ -51,6 +53,10 @@ class TicketHandlerAgent:
             return order_query.invoke(
                 {key: value for key, value in arguments.items() if key != "request_id"}
             )
+        if tool_name == "order_list":
+            return {"orders": list_orders(arguments["user_id"])}
+        if tool_name == "refund_apply":
+            return apply_refund(arguments["user_id"], arguments["order_id"], arguments["reason"], arguments["idempotency_key"])
         if tool_name == "ticket_create":
             # LLM 可能多传无关字段，白名单过滤防止 TypeError。
             allowed = {"title", "description", "priority", "category", "idempotency_key"}
@@ -102,6 +108,9 @@ class TicketHandlerAgent:
                     "你是订单客服 Agent。"
                     "用户询问订单状态或物流时，必须调用 order_query 工具。"
                     "如果用户没有提供订单号，请先询问订单号。"
+                    "查询自己的订单列表时使用 order_list。"
+                    "用户明确申请退款时使用 refund_apply；缺少订单号或用户提供的退款原因时先询问，绝不编造原因。"
+                    "退款申请只是等待人工审核，不代表退款成功或资金已退回。"
                     "不要编造订单信息。"
                 )
             ),
@@ -109,17 +118,27 @@ class TicketHandlerAgent:
         ]
 
         # 从 MCP Server 获取工具描述，并转换成 OpenAI function schema。
-        mcp_tools = await self.mcp_client.list_tools()
+        try:
+            mcp_tools = await self.mcp_client.list_tools()
+            available_tools = mcp_tools.tools
+            use_local = False
+        except (TimeoutError, ConnectionError, RuntimeError, OSError):
+            available_tools = await local_mcp_server.list_tools()
+            use_local = True
         llm_tools = [
             {
                 "type": "function",
                 "function": {
                     "name": tool.name,
                     "description": tool.description or "",
-                    "parameters": tool.input_schema,
+                    "parameters": {
+                        **tool.input_schema,
+                        "properties": {k: v for k, v in tool.input_schema.get("properties", {}).items() if k not in {"user_id", "request_id", "idempotency_key"}},
+                        "required": [k for k in tool.input_schema.get("required", []) if k not in {"user_id", "request_id", "idempotency_key"}],
+                    },
                 },
             }
-            for tool in mcp_tools.tools
+            for tool in available_tools if tool.name in {"order_query", "order_list", "refund_apply", "ticket_create"}
         ]
         llm_with_tools = self.llm.bind_tools(llm_tools)
 
@@ -144,36 +163,43 @@ class TicketHandlerAgent:
             print(
                 f"[TicketHandlerAgent] 调用 MCP 工具: {tool_call['name']}"
             )
-            print(
-                f"[TicketHandlerAgent] 工具参数: {tool_call['args']}"
-            )
-
             tool_name = tool_call["name"]
+            if tool_name not in {"order_query", "order_list", "refund_apply", "ticket_create"}:
+                raise ValueError("Unsupported tool")
             tool_arguments = dict(tool_call["args"])
+            tool_arguments.pop("user_id", None)
+            tool_arguments.pop("idempotency_key", None)
+            if tool_name in {"order_query", "order_list", "refund_apply"}:
+                tool_arguments["user_id"] = state["user_id"]
             request_id = tool_call["id"] or str(uuid.uuid4())
-            tool_arguments.setdefault("request_id", request_id)
+            tool_arguments["request_id"] = request_id
+            if tool_name == "refund_apply":
+                tool_arguments["idempotency_key"] = f"agent:{request_id}"
             if tool_name == "ticket_create":
                 tool_arguments["idempotency_key"] = self.build_idempotency_key(
                     state.get("user_id", ""),
                     tool_arguments,
                 )
 
-            fallback_used = False
-            error_type = None
+            fallback_used = use_local
+            error_type = "mcp_unavailable" if use_local else None
             retry_count = 0
             try:
-                result, retry_count = await self._call_with_retry(
-                    tool_name,
-                    tool_arguments,
-                )
+                if use_local:
+                    result = await asyncio.to_thread(self._local_tool, tool_name, tool_arguments)
+                else:
+                    result, retry_count = await self._call_with_retry(
+                        tool_name,
+                        tool_arguments,
+                    )
             except TimeoutError as error:
                 error_type = "timeout"
                 fallback_used = True
-                result = self._local_tool(tool_name, tool_arguments)
+                result = await asyncio.to_thread(self._local_tool, tool_name, tool_arguments)
             except (ConnectionError, RuntimeError) as error:
                 error_type = "mcp_error"
                 fallback_used = True
-                result = self._local_tool(tool_name, tool_arguments)
+                result = await asyncio.to_thread(self._local_tool, tool_name, tool_arguments)
 
             tool_results.append(
                 {

@@ -15,7 +15,10 @@ export async function api(path, options = {}) {
   if (response.status === 401) {
     window.dispatchEvent(new Event("auth-expired"));
   }
-  if (!response.ok) throw new Error(data.detail || "请求失败，请稍后重试");
+  if (!response.ok) {
+    const detail = data.detail;
+    throw new Error(typeof detail === "string" ? detail : detail?.message || "请求失败，请稍后重试");
+  }
   return data;
 }
 

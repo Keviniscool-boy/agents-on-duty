@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 
 from mcp_client.client import MCPClient
+from storage.after_sales import list_orders
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -20,10 +21,13 @@ async def main():
         for tool in tools.tools:
             print(tool.name)
 
+        demo_user = "mcp-demo-user"
+        order_id = list_orders(demo_user)[0]["order_id"]
         result = await client.call_tool(
             "order_query",
             {
-                "order_id": "ORD-20260401-001",
+                "order_id": order_id,
+                "user_id": demo_user,
             },
         )
 

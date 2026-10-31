@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import { API_URL, api, logout, INTENT_CLASS, INTENT_LABELS } from "./api.js";
+import AfterSales from "./AfterSales.jsx";
 
 function formatMeta(value, fallback = "—") {
   if (value === null || value === undefined || value === "") return fallback;
@@ -141,6 +142,7 @@ export default function ChatView({ user, onLogout }) {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState("");
   const [showOps, setShowOps] = useState(false);
+  const [showAfterSales, setShowAfterSales] = useState(false);
   const [showNav, setShowNav] = useState(false);
   const [streamStatus, setStreamStatus] = useState("");
   const messagesEndRef = useRef(null);
@@ -151,6 +153,8 @@ export default function ChatView({ user, onLogout }) {
   }, []);
 
   const loadHistory = useCallback(async (id) => {
+    setShowAfterSales(false);
+    setShowNav(false);
     setLoadingHistory(true);
     setError("");
     try {
@@ -250,6 +254,8 @@ export default function ChatView({ user, onLogout }) {
   }
 
   function newConversation() {
+    setShowAfterSales(false);
+    setShowNav(false);
     setSessionId(crypto.randomUUID());
     setMessages([]);
     setError("");
@@ -269,6 +275,9 @@ export default function ChatView({ user, onLogout }) {
           在线
         </div>
         <div className="user-menu">
+          <button className="text-button inverse" onClick={() => setShowAfterSales((v) => !v)}>
+            {showAfterSales ? "返回会话" : "订单售后"}
+          </button>
           <button className="text-button inverse" onClick={() => setShowNav((v) => !v)}>
             会话
           </button>
@@ -326,7 +335,7 @@ export default function ChatView({ user, onLogout }) {
           </div>
         </aside>
 
-        <section className="chat-panel">
+        {showAfterSales ? <AfterSales /> : <section className="chat-panel">
           <div className="chat-heading">
             <div>
               <p className="eyebrow">SUPERVISOR AGENT</p>
@@ -345,8 +354,8 @@ export default function ChatView({ user, onLogout }) {
                   <button onClick={() => setInput("商品签收后几天内可以申请退货？")}>
                     退货政策
                   </button>
-                  <button onClick={() => setInput("查询订单 ORD-20260401-001")}>
-                    查询订单
+                  <button onClick={() => setInput("查询我的订单")}>
+                    我的订单
                   </button>
                   <button onClick={() => setInput("开户需要准备什么？")}>开户流程</button>
                 </div>
@@ -405,7 +414,7 @@ export default function ChatView({ user, onLogout }) {
           <p className="chat-footnote">
             回答由 Agent 生成，请以系统记录和公开政策为准
           </p>
-        </section>
+        </section>}
 
         {showOps && <OpsPanel />}
       </section>
