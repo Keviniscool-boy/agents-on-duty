@@ -223,21 +223,33 @@ class LongTermMemory:
             for document in self.documents
         }
 
-        for file_path in kb_path.glob("**/*.txt"):
-            content = file_path.read_text(encoding="utf-8")
-            chunks = self._chunk_text(content)
+        try:
+            for file_path in kb_path.glob("**/*.txt"):
+                content = file_path.read_text(encoding="utf-8")
+                chunks = self._chunk_text(content)
 
-            for chunk in chunks:
-                if chunk in existing_contents:
-                    continue
+                for chunk in chunks:
+                    if chunk in existing_contents:
+                        continue
 
-                await self._add_document(
-                    content=chunk,
-                    source=file_path.name,
-                    metadata={"file": str(file_path)},
-                )
-                existing_contents.add(chunk)
-                count += 1
+                    await self._add_document(
+                        content=chunk,
+                        source=file_path.name,
+                        metadata={"file": str(file_path)},
+                    )
+                    existing_contents.add(chunk)
+                    count += 1
+        except Exception as exc:
+            # Embedding 服务不可用（配额耗尽、网络故障等）时降级为空知识库，
+            # 不阻塞应用启动；不落盘任何半成品索引，下次启动自动重试重建。
+            # 与 Redis/MySQL/MCP 的降级策略保持一致：缺的是外部服务，不该炸主流程。
+            self.index = None
+            self.documents = []
+            print(
+                f"知识库索引构建失败（{type(exc).__name__}: {exc}），"
+                "RAG 降级为空结果；凭据恢复后重启将自动重建索引。"
+            )
+            return 0
 
         if count:
             self.save()
