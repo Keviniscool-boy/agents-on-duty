@@ -125,8 +125,6 @@ async def lifespan(app: FastAPI):
     if count:
         long_term_memory.save()
         print(f"Loaded and saved {count} knowledge chunks")
-    elif long_term_memory.index_build_failed:
-        print("Knowledge index update failed; previous index retained")
     else:
         print(
             f"Loaded {len(long_term_memory.documents)} persisted knowledge chunks"
@@ -878,18 +876,7 @@ async def get_history(
 
 @app.get("/health")
 async def health_check():
-    knowledge_status = long_term_memory.knowledge_status()
-    overall_status = {
-        "degraded": "degraded",
-        "empty": "degraded",
-        "unknown": "unknown",
-        "ready": "healthy",
-    }[knowledge_status]
-    return {
-        "status": overall_status,
-        "version": "1.0.0",
-        "knowledge_base": {"status": knowledge_status, "documents": len(long_term_memory.documents)},
-    }
+    return {"status": "healthy", "version": "1.0.0"}
 
 
 @app.get("/api/sessions")
