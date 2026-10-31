@@ -32,7 +32,7 @@ class AgentState(TypedDict):
     compliance_retries: int
     sub_results: dict[str, Any]
     # 阶段二：业务工具创建了待人工审核的售后单时，由 ticket_handler 填充，
-    # 合规通过后进入 human_review 节点暂停等待客服决定。
+    # 固定等待话术后进入 human_review 节点暂停等待客服决定。
     pending_handoff: dict[str, Any]
     # 客服通过 Command(resume=...) 恢复时写入的决定。
     handoff_decision: dict[str, Any]
