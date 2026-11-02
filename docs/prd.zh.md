@@ -88,7 +88,7 @@
 
 - **用户输入**："商品签收后几天内可以申请退货？"
 - **路由**：确定性快路径命中知识词（"退货"在 `_deterministic_intent` 词表）→ `knowledge_rag`，0 次 LLM 路由调用；未命中词表的走 LLM 路由。
-- **检索**：`rewrite_query` 先把口语化问题改写为检索查询（LLM）→ FAISS 检索 top5、`min_score=0.55` → `rerank_documents` 用 LLM 从 5 个候选中取最相关 Top3（`agents/knowledge_rag.py:87-146`）。
+- **检索**：`rewrite_query` 先把口语化问题改写为检索查询（LLM）→ 向量（FAISS）+ 关键词（中文二元组/英文词）混合检索，RRF 融合候选、`min_score=0.55` → `rerank_documents` 用 LLM 从候选中取最相关 Top3（`agents/knowledge_rag.py`）。检索不到、置信度不足或政策冲突时拒答，并按业务关键词建议转人工。
 - **生成**：系统提示词要求"严格根据检索文档回答、不编造、金融产品补充免责声明、末尾标注来源"（`knowledge_rag.py:54-64`）；检索为空时直接返回"当前知识库没有相关信息，暂时无法确认"（`knowledge_rag.py:38-46`）。
 - **来源引用**：回答末尾标注文档来源（如 `POL-AFTER-MVP-001 v1.0 §无理由退货`），来源列表同时写入 `sub_results.sources`，并在回答后附检索片段。
 - **合规检查**：规则层查 PII/敏感词；LLM 层收到检索原文作为可信上下文，提示词明确"引用知识库来源不算泄露"（`agents/compliance_checker.py`）。

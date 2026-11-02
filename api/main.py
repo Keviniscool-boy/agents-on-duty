@@ -240,6 +240,9 @@ class ChatResponse(BaseModel):
     compliance_reason: str
     # 阶段二：本轮触发了人工审核暂停（interrupt），等待客服决定。
     awaiting_human: bool = False
+    # 阶段四：知识库回答的决策（answer / refuse / degraded）与转人工建议。
+    knowledge_decision: str = ""
+    handoff_required: bool = False
 
 
 # 登录限流：同一 IP + 用户名在窗口期内最多尝试 LOGIN_MAX_ATTEMPTS 次。
@@ -751,6 +754,9 @@ async def _finalize_chat(
 ) -> ChatResponse:
     """把图执行结果写入记忆并组装响应，chat 与 chat/stream 共用。"""
     interrupted = bool(result.get("__interrupt__"))
+    sub_results = result.get("sub_results", {}) or {}
+    knowledge_decision = sub_results.get("knowledge_decision", "")
+    handoff_required = bool(sub_results.get("handoff_required", False))
     response = result["final_response"]
     if interrupted:
         # 图暂停在 human_review：本轮给用户的是等待提示，
@@ -759,11 +765,13 @@ async def _finalize_chat(
     elif not result["compliance_passed"]:
         response = "抱歉，该回答未通过合规审查，暂时无法提供详细信息。"
     elif result.get("current_agent") == "knowledge_rag":
-        evidence = result.get("sub_results", {}).get("knowledge_rag_context", [])
+        evidence = sub_results.get("knowledge_rag_context", [])
         references = [f"{item['source']}：{item['content']}" for item in evidence[:3]
                       if item.get("source") and item.get("content")]
         if references:
             response += "\n\n参考片段：\n" + "\n".join(references)
+        if handoff_required:
+            response += "\n\n如需人工协助，请联系人工客服或提交工单。"
 
     working_memory.update(
         session_id,
@@ -793,6 +801,8 @@ async def _finalize_chat(
         compliance_passed=result["compliance_passed"],
         compliance_reason=result["compliance_reason"],
         awaiting_human=interrupted,
+        knowledge_decision=knowledge_decision,
+        handoff_required=handoff_required,
     )
 
 
