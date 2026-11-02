@@ -73,12 +73,12 @@
 
 - **不是真实订单系统**：`mcp_tools/order_server.py → order_query` 查询 `tools/mock_data.py` 的演示表（1001/1002/ORD-20260401-001），并显式返回 `mock: True` 标记。
 - **不接入真实物流平台**：物流字段是 mock 文案。
-- **MCP 服务当前主要使用 mock 数据**：`knowledge_search` 返回模板串、`risk_check` 仅金额阈值，工具描述已标注"mock 演示数据/演示实现"（`order_server.py`）。
+- **MCP 服务当前主要使用 mock 数据**：`knowledge_search` 已下线（返回 `knowledge_unavailable`，请走知识库问答）、`risk_check` 仅金额阈值，工具描述已标注"mock 演示数据/演示实现"（`order_server.py`）。
 - **不提供人工客服工作台**：无坐席接管、无转人工（前端无此入口）。
 - **不包含 CRM / 工单运营后台**：工单只有创建与幂等，无列表/流转/升级。
 - **不保证生产级回答准确率**：评测为自建小样本（见第 14 节）。
 - **不承诺企业级 SLA / 并发指标**：仓库未定义（见第 13 节）。
-- **不包含知识库运营后台**：知识更新 = 修改 `knowledge_base/*.txt` + 重启（kb 管理子系统在规划中，见第 16 节）。
+- **不包含知识库运营后台**：知识更新 = 修改 `knowledge_base/*.txt` 或带 front matter 的 `.md` 政策 + 重启；政策按发布状态/版本/生效日期过滤（完整发布管理仍在规划中，见第 16 节）。
 - **不包含多租户与组织权限体系**：只有用户级 JWT 与会话归属。
 - **前端不使用第三方登录/多因素认证**：单一 JWT（httpOnly Cookie 下发），登出仅为 Cookie 清除、无服务端吊销列表。
 
@@ -90,7 +90,7 @@
 - **路由**：确定性快路径命中知识词（"退货"在 `_deterministic_intent` 词表）→ `knowledge_rag`，0 次 LLM 路由调用；未命中词表的走 LLM 路由。
 - **检索**：`rewrite_query` 先把口语化问题改写为检索查询（LLM）→ FAISS 检索 top5、`min_score=0.55` → `rerank_documents` 用 LLM 从 5 个候选中取最相关 Top3（`agents/knowledge_rag.py:87-146`）。
 - **生成**：系统提示词要求"严格根据检索文档回答、不编造、金融产品补充免责声明、末尾标注来源"（`knowledge_rag.py:54-64`）；检索为空时直接返回"当前知识库没有相关信息，暂时无法确认"（`knowledge_rag.py:38-46`）。
-- **来源引用**：回答末尾标注文档来源（如 `return_policy.txt`），来源列表同时写入 `sub_results.sources`。
+- **来源引用**：回答末尾标注文档来源（如 `POL-AFTER-MVP-001 v1.0 §无理由退货`），来源列表同时写入 `sub_results.sources`，并在回答后附检索片段。
 - **合规检查**：规则层查 PII/敏感词；LLM 层收到检索原文作为可信上下文，提示词明确"引用知识库来源不算泄露"（`agents/compliance_checker.py`）。
 - **返回**：合成后的回答 + 前端轨迹标签（知识库 ✓ 合规）。
 
@@ -276,7 +276,7 @@ MCP 工具的 mock 级别明细（`mcp_tools/order_server.py`）：
 |---|---|
 | `order_query` | mock 订单表（3 个演示单号），显式返回 `mock: True` |
 | `ticket_create` | 幂等逻辑真实（SQLite 主键），业务系统为演示实现 |
-| `knowledge_search` | 模板串返回，非真实检索 |
+| `knowledge_search` | 已下线，返回 `knowledge_unavailable`（知识问答走 `knowledge_rag`） |
 | `risk_check` | 演示实现：仅金额阈值判断 |
 | SQLite | 账户、会话归属、幂等、checkpoint | 必需（本地文件） |
 | FAISS | 向量检索 | 必需（本地库） |
@@ -363,7 +363,7 @@ MCP 工具的 mock 级别明细（`mcp_tools/order_server.py`）：
 ## 15. 当前限制与风险
 
 1. **MCP Server 启动阶段是硬依赖**：`api/main.py:85` 的 `await mcp_client.connect()` 无异常处理，Server 无法启动（如端口/依赖问题）会导致应用启动失败；运行时单次调用的降级已实现，启动级降级未实现。
-2. **订单/物流全部 mock**（`tools/mock_data.py`，3 个演示单号）；`knowledge_search` 返回模板串、`risk_check` 仅金额阈值——工具描述已标注，但不能接真实用户。
+2. **订单/物流全部 mock**（`tools/mock_data.py`，3 个演示单号）；`knowledge_search` 已下线、`risk_check` 仅金额阈值——工具描述已标注，但不能接真实用户。
 2. **依赖外部 LLM 与 Embedding 服务**：无凭据则聊天与建索引不可用；模型行为漂移会影响路由/合规表现。
 3. **合规判断存在误判与漏判可能**：LLM 审查是概率性的；正则会误伤普通长数字（如时间戳），宁枉勿纵是有意取舍。
 4. **知识库规模很小**：5 篇文档约 30 行文本（`knowledge_base/`），RAG 表现对"小库精确"场景有效，不能外推到大规模语料。

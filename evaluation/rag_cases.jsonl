@@ -1,7 +1,7 @@
-{"id":"rag-001","question":"商品签收后多少天内可以申请退货？","expected_source":"return_policy.txt","expected_keywords":["7","退货"]}
-{"id":"rag-002","question":"申请退货时商品需要满足什么条件？","expected_source":"return_policy.txt","expected_keywords":["未使用","完整包装"]}
-{"id":"rag-003","question":"签收后第5天还能申请退货吗？","expected_source":"return_policy.txt","expected_keywords":["可以","7"]}
-{"id":"rag-004","question":"商品用了以后还能申请退货吗？","expected_source":"return_policy.txt","expected_keywords":["未使用"]}
+{"id":"rag-001","question":"商品签收后多少天内可以申请退货？","expected_source":"POL-AFTER-MVP-001","expected_keywords":["7","退货"]}
+{"id":"rag-002","question":"申请退货时商品需要满足什么条件？","expected_source":"POL-AFTER-MVP-001","expected_keywords":["人工"]}
+{"id":"rag-003","question":"签收后第5天还能申请退货吗？","expected_source":"POL-AFTER-MVP-001","expected_keywords":["可以","7"]}
+{"id":"rag-004","question":"商品用了以后还能申请退货吗？","expected_source":"POL-AFTER-MVP-001","expected_keywords":["人工"]}
 {"id":"rag-005","question":"理财产品A的参考年化收益率是多少？","expected_source":"product_faq.txt","expected_keywords":["3.5%","5.2%"]}
 {"id":"rag-006","question":"理财产品A的投资期限和最低金额是多少？","expected_source":"product_faq.txt","expected_keywords":["6个月","10000"]}
 {"id":"rag-007","question":"理财产品A是不是银行存款？","expected_source":"product_faq.txt","expected_keywords":["不是","风险"]}

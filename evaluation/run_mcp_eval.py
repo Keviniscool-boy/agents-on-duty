@@ -63,8 +63,8 @@ async def main() -> None:
         )
         knowledge_text = text_content(knowledge)
         results.append({
-            "case": "knowledge_search",
-            "passed": "退款政策" in knowledge_text and "score" in knowledge_text,
+            "case": "knowledge_search_disabled",
+            "passed": "knowledge_unavailable" in knowledge_text,
             "actual": knowledge_text,
         })
 
