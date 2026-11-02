@@ -51,6 +51,7 @@ from mcp_tools.order_server import server as mcp_server
 from memory.long_term import LongTermMemory
 from memory.short_term import ShortTermMemory
 from memory.working_memory import WorkingMemory
+from knowledge.service import KnowledgeService
 from langgraph.types import Command
 from storage.mysql_store import mysql_store
 from storage.after_sales import (
@@ -206,6 +207,12 @@ class RefundRequest(BaseModel):
     order_id: str
     reason: str
     application_type: str | None = None
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    min_score: float = 0.5
 
 
 class AuthRequest(BaseModel):
@@ -372,6 +379,22 @@ def order_detail(order_id: str, current_user: dict = Depends(get_current_user)):
     if "error" in result:
         raise HTTPException(status_code=404, detail=result)
     return result
+
+
+@app.post("/api/knowledge/search")
+async def knowledge_search(
+    request: KnowledgeSearchRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Stable knowledge API for the Pi experiment and other clients."""
+    service = KnowledgeService(long_term_memory)
+    hits = await service.search(request.query, request.top_k, request.min_score)
+    return {"query": request.query, "hits": [hit.to_dict() for hit in hits]}
+
+
+@app.get("/api/knowledge/status")
+def knowledge_status(current_user: dict = Depends(get_current_user)):
+    return KnowledgeService(long_term_memory).status()
 
 
 @app.get("/api/refunds")

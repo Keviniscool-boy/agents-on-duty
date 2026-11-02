@@ -1,0 +1,22 @@
+{
+  "name": "pi-knowledge-agent-experiment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pi-based knowledge agent experiment for Agents on Duty (Stage 6)",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.0"
+  }
+}

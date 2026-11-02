@@ -13,6 +13,10 @@ venv/
 frontend/node_modules/
 frontend/dist/
 
+# Pi experiment build artifacts and dependencies
+experiments/*/node_modules/
+experiments/*/dist/
+
 # Runtime data (SQLite auth/idempotency/checkpoints, generated vector index)
 vector_store/
 data/
