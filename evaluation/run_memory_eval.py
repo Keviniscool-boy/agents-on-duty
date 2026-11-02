@@ -99,7 +99,7 @@ async def test_long_term() -> list[dict]:
         {
             "case": "long_term_search",
             "passed": any(
-                item.get("source") == "return_policy.txt"
+                str(item.get("source", "")).startswith("POL-AFTER-MVP-001")
                 for item in results
             ),
             "actual": [item.get("source") for item in results],

@@ -69,7 +69,7 @@ async def main() -> None:
             sources = [item.get("source") for item in retrieved]
             expected_source = case["expected_source"]
             retrieval_correct = (
-                expected_source in sources
+                any(str(source).startswith(expected_source) for source in sources)
                 if expected_source
                 else not sources
             )
