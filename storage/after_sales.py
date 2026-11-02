@@ -64,7 +64,8 @@ def _connect():
             session_id TEXT NOT NULL, user_id TEXT NOT NULL,
             action TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', operator TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'done')),
-            claimed_at TEXT, completed_at TEXT, response TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+            claimed_at TEXT, completed_at TEXT, failure_count INTEGER NOT NULL DEFAULT 0,
+            response TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
             UNIQUE(refund_id, action)
         );
         CREATE TABLE IF NOT EXISTS session_turn_locks (
@@ -90,6 +91,14 @@ def _connect():
     if "completed_at" not in outbox_columns:
         try:
             db.execute("ALTER TABLE handoff_outbox ADD COLUMN completed_at TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                db.close()
+                raise
+    outbox_columns = {row["name"] for row in db.execute("PRAGMA table_info(handoff_outbox)")}
+    if "failure_count" not in outbox_columns:
+        try:
+            db.execute("ALTER TABLE handoff_outbox ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError as exc:
             if "duplicate column name" not in str(exc).lower():
                 db.close()
@@ -291,13 +300,27 @@ def admin_refunds(limit: int, offset: int, status: str = "") -> list[dict]:
 
 
 def admin_refund_counts() -> dict:
+    """管理员概览：退款状态分布、待处理/失败工单与等待恢复事件。"""
     with closing(_connect()) as db:
         counts = {row["status"]: row["n"] for row in db.execute(
             "SELECT status, COUNT(*) AS n FROM refund_requests GROUP BY status"
         )}
         waiting_info = db.execute("SELECT COUNT(*) FROM refund_tickets WHERE status = 'processing'").fetchone()[0]
+        pending_tickets = db.execute(
+            "SELECT COUNT(*) FROM refund_tickets WHERE status IN ('pending', 'processing')"
+        ).fetchone()[0]
         pending_resume = db.execute("SELECT COUNT(*) FROM handoff_outbox WHERE status != 'done'").fetchone()[0]
-    return {"by_status": counts, "waiting_for_customer": waiting_info, "pending_resume": pending_resume}
+        # 失败工单：恢复流程失败过、且仍未完成的工单（可在客服工作台重试）。
+        failed_tickets = db.execute(
+            "SELECT COUNT(DISTINCT refund_id) FROM handoff_outbox WHERE failure_count > 0 AND status != 'done'"
+        ).fetchone()[0]
+    return {
+        "by_status": counts,
+        "waiting_for_customer": waiting_info,
+        "pending_tickets": pending_tickets,
+        "pending_resume": pending_resume,
+        "failed_tickets": failed_tickets,
+    }
 
 
 def admin_business_events(limit: int, offset: int = 0) -> list[dict]:
@@ -448,9 +471,11 @@ def finish_handoff(event_id: int, token: str, response: str) -> bool:
 
 
 def release_handoff(event_id: int, token: str) -> None:
+    """释放恢复租约：回到 pending 可重试，并累计一次失败次数（供管理员统计失败工单）。"""
     with closing(_connect()) as db, db:
         db.execute(
-            "UPDATE handoff_outbox SET status = 'pending', claimed_at = NULL WHERE id = ? AND status = 'running' AND claimed_at = ?",
+            "UPDATE handoff_outbox SET status = 'pending', claimed_at = NULL, "
+            "failure_count = failure_count + 1 WHERE id = ? AND status = 'running' AND claimed_at = ?",
             (event_id, token),
         )
 

@@ -59,6 +59,7 @@ def init_database() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_admin_events_trace ON admin_events(trace_id, id);
             CREATE INDEX IF NOT EXISTS idx_admin_events_created ON admin_events(created_at, id);
+            CREATE INDEX IF NOT EXISTS idx_admin_events_kind ON admin_events(kind, id);
             """
         )
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
@@ -147,18 +148,31 @@ def set_user_role(username: str, role: str, actor_id: str = "bootstrap") -> sqli
             (datetime.now(timezone.utc).isoformat(), actor_id, existing["id"], f"{existing['role']}->{role}"),
         )
         return connection.execute(
-            "SELECT id, username, role FROM users WHERE username = ?",
+            "SELECT id, username, role, created_at FROM users WHERE username = ?",
             (username,),
         ).fetchone()
 
 
-def list_users(limit: int = 100, offset: int = 0) -> list[dict]:
+def list_users(limit: int = 100, offset: int = 0, role: str = "") -> list[dict]:
+    """管理员账号列表；role 为空时返回全部，否则按角色过滤（user/agent/admin）。"""
     with _connection() as connection:
         rows = connection.execute(
-            "SELECT id, username, role, created_at FROM users ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            "SELECT id, username, role, created_at FROM users WHERE (? = '' OR role = ?) "
+            "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            (role, role, limit, offset),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def count_users_by_role() -> dict[str, int]:
+    """账号统计：用户 / 客服 / 管理员分别有多少个。"""
+    with _connection() as connection:
+        rows = connection.execute(
+            "SELECT role, COUNT(*) AS n FROM users GROUP BY role"
+        ).fetchall()
+    counts = {"user": 0, "agent": 0, "admin": 0}
+    counts.update({row["role"]: row["n"] for row in rows})
+    return counts
 
 
 def get_usernames_by_ids(user_ids: list[str]) -> dict[str, str]:

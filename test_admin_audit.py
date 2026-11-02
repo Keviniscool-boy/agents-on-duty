@@ -120,3 +120,69 @@ def test_admin_routes_require_admin(isolated, role, expected):
             assert client.post("/api/admin/users/role", json={"username": "admin", "role": "user"}).status_code == 409
     finally:
         app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_user_role_filter_and_counts(isolated):
+    admin, user = isolated
+    database.set_user_role("user", "agent", actor_id=admin["id"])
+    assert [row["id"] for row in database.list_users(role="agent")] == [user["id"]]
+    assert database.count_users_by_role() == {"user": 0, "agent": 1, "admin": 1}
+    assert len(database.list_users(role="")) == 2
+
+
+def test_overview_pending_and_failed_stats(isolated):
+    order = next(o for o in after_sales.list_orders("customer") if o["status"] == "delivered")
+    refund = after_sales.apply_refund("customer", order["order_id"], "reason", "k1")
+    with after_sales._connect() as db:
+        db.execute(
+            "INSERT INTO handoff_outbox (refund_id, session_id, user_id, action, created_at, status, failure_count) "
+            "VALUES (?, ?, ?, 'approve', ?, 'pending', 2)",
+            (refund["id"], "", "customer", after_sales._now().isoformat()),
+        )
+        db.commit()
+    counts = after_sales.admin_refund_counts()
+    assert counts["pending_tickets"] == 1
+    assert counts["failed_tickets"] == 1
+    assert counts["pending_resume"] == 1
+
+
+def test_compliance_violation_codes_are_content_free():
+    from tracing.otel_config import compliance_violation_codes
+
+    assert compliance_violation_codes(["forbidden term detected: guaranteed profit"]) == ["forbidden_term"]
+    assert compliance_violation_codes(["private information detected: phone"]) == ["pii"]
+    assert compliance_violation_codes(["compliance model returned invalid JSON"]) == ["invalid_model_output"]
+    assert compliance_violation_codes(["some llm reason"]) == ["llm_violation"]
+    assert compliance_violation_codes([]) == []
+
+
+def test_compliance_codes_recorded_from_result(isolated):
+    from agents.compliance_checker import ComplianceResult
+
+    @trace_agent_call("compliance_rule_check")
+    async def node():
+        return ComplianceResult(passed=False, risk_level="medium", violations=["forbidden term detected: x"])
+
+    with trace_scope("trace-codes", "actor", "session"):
+        asyncio.run(node())
+    events = list_events(10, trace_id="trace-codes")
+    assert events[0]["detail"] == "rejected;risk=medium;codes=forbidden_term"
+
+
+def test_admin_audit_kind_filter(isolated):
+    from api.main import app
+
+    app.dependency_overrides[get_current_user] = lambda: {"id": isolated[0]["id"], "username": "admin", "role": "admin"}
+    try:
+        client = TestClient(app)
+        order = next(o for o in after_sales.list_orders("customer") if o["status"] == "delivered")
+        after_sales.apply_refund("customer", order["order_id"], "reason", "k-audit")
+        database.set_user_role("user", "agent", actor_id=isolated[0]["id"])
+        role_events = client.get("/api/admin/audit?kind=role").json()["events"]
+        assert role_events and all(event["kind"] == "role" for event in role_events)
+        business_events = client.get("/api/admin/audit?kind=business").json()["events"]
+        assert business_events and all(event["kind"] == "business" for event in business_events)
+        all_events = client.get("/api/admin/audit").json()["events"]
+        assert {"role", "business"} <= {event["kind"] for event in all_events}
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
