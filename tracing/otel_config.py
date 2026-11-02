@@ -137,12 +137,64 @@ def get_metrics() -> AgentMetrics:
     return _metrics
 
 
+def compliance_violation_codes(violations: list[str]) -> list[str]:
+    """把合规违规文本归类为固定代码，供运行记录展示命中类型而不落库原文。"""
+    mapping = (
+        ("forbidden term", "forbidden_term"),
+        ("private information", "pii"),
+        ("invalid json", "invalid_model_output"),
+    )
+    codes: list[str] = []
+    for item in violations or []:
+        text = str(item).lower()
+        code = next((value for needle, value in mapping if needle in text), "llm_violation")
+        if code not in codes:
+            codes.append(code)
+    return codes
+
+
 def trace_agent_call(agent_name: str) -> Callable:
     """创建记录 Agent 方法调用的装饰器。"""
 
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         async def wrapper(*args, **kwargs) -> Any:
+            from tracing.admin_audit import current_trace, record_event
+
+            async def audited_call():
+                context = current_trace()
+                started = time.perf_counter()
+                outcome = "success"
+                detail = ""
+                try:
+                    result = await func(*args, **kwargs)
+                    if isinstance(result, dict) and "compliance_passed" in result:
+                        compliance = result.get("sub_results", {}).get("compliance", {}) or {}
+                        detail = "passed" if result["compliance_passed"] else "rejected"
+                        risk = compliance.get("risk_level")
+                        if risk in {"low", "medium", "high", "critical"}:
+                            detail += f";risk={risk}"
+                        codes = compliance.get("violation_codes") or []
+                        if codes:
+                            detail += ";codes=" + ",".join(codes)
+                    elif agent_name.startswith("compliance") and hasattr(result, "passed"):
+                        detail = "passed" if result.passed else "rejected"
+                        risk = getattr(result, "risk_level", None)
+                        if risk in {"low", "medium", "high", "critical"}:
+                            detail += f";risk={risk}"
+                        codes = compliance_violation_codes(getattr(result, "violations", []) or [])
+                        if codes:
+                            detail += ";codes=" + ",".join(codes)
+                    return result
+                except BaseException as exc:
+                    outcome = "interrupted" if type(exc).__name__ == "GraphInterrupt" else "error"
+                    detail = type(exc).__name__
+                    raise
+                finally:
+                    if context:
+                        record_event(kind="compliance" if agent_name == "compliance_process" else "node", action=agent_name, outcome=outcome,
+                                     duration_ms=(time.perf_counter() - started) * 1000,
+                                     detail=detail, **context)
             # metrics 与 tracing 解耦（B13）：tracer 缺失时仍然记录调用指标，
             # 保证 /api/metrics 在未配置 OTEL 时也有数据。
             tracer = get_tracer()
@@ -150,7 +202,7 @@ def trace_agent_call(agent_name: str) -> Callable:
 
             if tracer is None:
                 try:
-                    result = await func(*args, **kwargs)
+                    result = await audited_call()
                     duration_ms = (time.perf_counter() - start_time) * 1000
                     _metrics.record_call(agent_name, duration_ms, True)
                     return result
@@ -166,7 +218,7 @@ def trace_agent_call(agent_name: str) -> Callable:
                 start_time = time.perf_counter()
 
                 try:
-                    result = await func(*args, **kwargs)
+                    result = await audited_call()
                     duration_ms = (time.perf_counter() - start_time) * 1000
                     span.set_attribute("agent.duration_ms", duration_ms)
                     span.set_attribute("agent.success", True)

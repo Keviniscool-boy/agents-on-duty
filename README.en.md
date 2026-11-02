@@ -30,6 +30,7 @@ Customers can view their orders and requests. Support agents can review the hand
 - **After-sales requests:** Account-scoped demo orders, refund applications, cancellation, and idempotent retries.
 - **Human workbench:** Review the request and conversation, ask for more information, approve, or reject.
 - **Pause and resume:** A chat workflow pauses for review; a failed resume can be retried from the workbench.
+- **Admin workspace:** Manage account roles, browse refund tickets by status, inspect agent runs (nodes / tools / failures / fallbacks) and audit logs (roles / compliance / after-sales actions), and track pending and failed tickets.
 - **Knowledge answers:** Answer from local documents with requested source citations and show a fallback when embeddings are unavailable.
 - **Orchestration and resilience:** Supervisor routing, compliance checks, MCP tools, storage fallback, and SSE progress.
 

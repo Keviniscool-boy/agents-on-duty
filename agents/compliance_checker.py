@@ -5,7 +5,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from tracing.otel_config import trace_agent_call
+from tracing.otel_config import compliance_violation_codes, trace_agent_call
 
 
 @dataclass
@@ -227,6 +227,7 @@ class ComplianceCheckerAgent:
                     "reason": reason,
                     "risk_level": result.risk_level,
                     "violations": result.violations,
+                    "violation_codes": compliance_violation_codes(result.violations),
                 },
             },
         }

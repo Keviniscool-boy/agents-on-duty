@@ -588,6 +588,24 @@ article[data-status] .after-sales-row strong::before {
 .kv-row dt { color: var(--ink-soft); }
 .kv-row dd { margin: 0; font-weight: 700; text-align: right; word-break: break-all; }
 
+/* ---------- 管理员工作区 ---------- */
+.admin-filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.admin-filters label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); }
+.admin-filters select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: white; font-size: 12px; }
+.admin-table-wrap { overflow-x: auto; }
+.admin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.admin-table th { text-align: left; color: var(--ink-soft); font-weight: 700; padding: 8px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.admin-table td { padding: 8px 6px; border-bottom: 1px solid #f1f5f9; vertical-align: top; word-break: break-all; }
+.admin-table tbody tr:hover { background: #f8fafc; }
+.admin-table select { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+.admin-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.admin-stat { background: white; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; box-shadow: var(--shadow-sm); display: grid; gap: 4px; }
+.admin-stat span { font-size: 12px; color: var(--ink-soft); }
+.admin-stat strong { font-size: 20px; }
+.admin-pager { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.admin-pager button { border: 1px solid var(--line); background: white; border-radius: 8px; padding: 6px 10px; font-size: 12px; }
+.admin-pager button:disabled { opacity: 0.45; }
+
 /* ---------- 滚动条 ---------- */
 .messages::-webkit-scrollbar,
 .after-sales::-webkit-scrollbar,

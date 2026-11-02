@@ -47,6 +47,11 @@ def _connect():
             note TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS after_sales_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,
+            action TEXT NOT NULL, actor_id TEXT NOT NULL, refund_id TEXT NOT NULL,
+            order_id TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS refund_customer_updates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             refund_id TEXT NOT NULL REFERENCES refund_requests(id),
@@ -59,7 +64,8 @@ def _connect():
             session_id TEXT NOT NULL, user_id TEXT NOT NULL,
             action TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', operator TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'running', 'done')),
-            claimed_at TEXT, completed_at TEXT, response TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+            claimed_at TEXT, completed_at TEXT, failure_count INTEGER NOT NULL DEFAULT 0,
+            response TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
             UNIQUE(refund_id, action)
         );
         CREATE TABLE IF NOT EXISTS session_turn_locks (
@@ -85,6 +91,14 @@ def _connect():
     if "completed_at" not in outbox_columns:
         try:
             db.execute("ALTER TABLE handoff_outbox ADD COLUMN completed_at TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column name" not in str(exc).lower():
+                db.close()
+                raise
+    outbox_columns = {row["name"] for row in db.execute("PRAGMA table_info(handoff_outbox)")}
+    if "failure_count" not in outbox_columns:
+        try:
+            db.execute("ALTER TABLE handoff_outbox ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError as exc:
             if "duplicate column name" not in str(exc).lower():
                 db.close()
@@ -192,6 +206,8 @@ def apply_refund(user_id: str, order_id: str, reason: str, idempotency_key: str,
                    (ticket_id, refund_id, user_id, "pending", created))
         db.execute("INSERT INTO refund_idempotency VALUES (?, ?, ?, ?, ?)",
                    (user_id, idempotency_key, order_id, reason, refund_id))
+        db.execute("INSERT INTO after_sales_audit (created_at, action, actor_id, refund_id, order_id) VALUES (?, 'refund_requested', ?, ?, ?)",
+                   (created, user_id, refund_id, order_id))
         db.commit()
         return {"id": refund_id, "order_id": order_id, "reason": reason, "session_id": session_id,
                 "ticket_id": ticket_id, "status": "pending_review", "created_at": created, "reused": False, "mock": True}
@@ -235,6 +251,8 @@ def cancel_refund(user_id: str, refund_id: str) -> dict:
                 "INSERT OR IGNORE INTO handoff_outbox (refund_id, session_id, user_id, action, created_at) VALUES (?, ?, ?, 'cancel', ?)",
                 (refund_id, refund["session_id"], user_id, _now().isoformat()),
             )
+        db.execute("INSERT INTO after_sales_audit (created_at, action, actor_id, refund_id, order_id) VALUES (?, 'refund_cancelled', ?, ?, ?)",
+                   (_now().isoformat(), user_id, refund_id, refund["order_id"]))
         db.commit()
         return {**dict(refund), "status": "cancelled", "reused": False, "mock": True}
     finally:
@@ -266,6 +284,56 @@ def list_refund_reviews() -> list[dict]:
             """
         ).fetchall()
     return _enrich_usernames([{**dict(row), "mock": True} for row in rows], "user_id", "username")
+
+
+def admin_refunds(limit: int, offset: int, status: str = "") -> list[dict]:
+    with closing(_connect()) as db:
+        rows = db.execute(
+            """SELECT r.id, r.order_id, r.user_id, r.status, r.session_id, r.created_at,
+                      t.id AS ticket_id, t.status AS ticket_status,
+                      (SELECT h.status FROM handoff_outbox h WHERE h.refund_id = r.id ORDER BY h.id DESC LIMIT 1) AS resume_status
+               FROM refund_requests r LEFT JOIN refund_tickets t ON t.refund_id = r.id
+               WHERE (? = '' OR r.status = ?) ORDER BY r.created_at DESC, r.id DESC LIMIT ? OFFSET ?""",
+            (status, status, limit, offset),
+        ).fetchall()
+    return _enrich_usernames([dict(row) for row in rows], "user_id", "username")
+
+
+def admin_refund_counts() -> dict:
+    """管理员概览：退款状态分布、待处理/失败工单与等待恢复事件。"""
+    with closing(_connect()) as db:
+        counts = {row["status"]: row["n"] for row in db.execute(
+            "SELECT status, COUNT(*) AS n FROM refund_requests GROUP BY status"
+        )}
+        waiting_info = db.execute("SELECT COUNT(*) FROM refund_tickets WHERE status = 'processing'").fetchone()[0]
+        pending_tickets = db.execute(
+            "SELECT COUNT(*) FROM refund_tickets WHERE status IN ('pending', 'processing')"
+        ).fetchone()[0]
+        pending_resume = db.execute("SELECT COUNT(*) FROM handoff_outbox WHERE status != 'done'").fetchone()[0]
+        # 失败工单：恢复流程失败过、且仍未完成的工单（可在客服工作台重试）。
+        failed_tickets = db.execute(
+            "SELECT COUNT(DISTINCT refund_id) FROM handoff_outbox WHERE failure_count > 0 AND status != 'done'"
+        ).fetchone()[0]
+    return {
+        "by_status": counts,
+        "waiting_for_customer": waiting_info,
+        "pending_tickets": pending_tickets,
+        "pending_resume": pending_resume,
+        "failed_tickets": failed_tickets,
+    }
+
+
+def admin_business_events(limit: int, offset: int = 0) -> list[dict]:
+    with closing(_connect()) as db:
+        rows = db.execute(
+            """SELECT created_at, action, actor_id, refund_id, order_id FROM (
+                   SELECT created_at, action, actor_id, refund_id, order_id FROM after_sales_audit
+                   UNION ALL
+                   SELECT a.created_at, a.action, a.operator_id AS actor_id, a.refund_id, r.order_id
+                   FROM workbench_actions a JOIN refund_requests r ON r.id = a.refund_id
+               ) ORDER BY created_at DESC LIMIT ? OFFSET ?""", (limit, offset),
+        ).fetchall()
+    return [{**dict(row), "kind": "business", "outcome": "success"} for row in rows]
 
 
 def get_refund_review(refund_id: str) -> dict | None:
@@ -321,7 +389,7 @@ def provide_refund_information(user_id: str, refund_id: str, content: str) -> di
     try:
         db.execute("BEGIN IMMEDIATE")
         refund = db.execute(
-            "SELECT id, status FROM refund_requests WHERE id = ? AND user_id = ?",
+            "SELECT id, status, order_id FROM refund_requests WHERE id = ? AND user_id = ?",
             (refund_id, user_id),
         ).fetchone()
         if not refund:
@@ -338,6 +406,8 @@ def provide_refund_information(user_id: str, refund_id: str, content: str) -> di
             "INSERT INTO refund_customer_updates (refund_id, user_id, content, created_at) VALUES (?, ?, ?, ?)",
             (refund_id, user_id, content, _now().isoformat()),
         )
+        db.execute("INSERT INTO after_sales_audit (created_at, action, actor_id, refund_id, order_id) VALUES (?, 'information_submitted', ?, ?, ?)",
+                   (_now().isoformat(), user_id, refund_id, refund["order_id"]))
         db.commit()
         return {"id": refund_id, "status": "pending_review", "ticket_status": "pending"}
     finally:
@@ -401,9 +471,11 @@ def finish_handoff(event_id: int, token: str, response: str) -> bool:
 
 
 def release_handoff(event_id: int, token: str) -> None:
+    """释放恢复租约：回到 pending 可重试，并累计一次失败次数（供管理员统计失败工单）。"""
     with closing(_connect()) as db, db:
         db.execute(
-            "UPDATE handoff_outbox SET status = 'pending', claimed_at = NULL WHERE id = ? AND status = 'running' AND claimed_at = ?",
+            "UPDATE handoff_outbox SET status = 'pending', claimed_at = NULL, "
+            "failure_count = failure_count + 1 WHERE id = ? AND status = 'running' AND claimed_at = ?",
             (event_id, token),
         )
 
