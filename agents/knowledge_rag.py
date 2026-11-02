@@ -5,6 +5,17 @@ from memory.long_term import EmbeddingUnavailable, LongTermMemory
 from tracing.otel_config import trace_agent_call
 
 
+MIN_ANSWER_SCORE = 0.5
+REFUSAL_MESSAGE = "当前知识库没有相关信息，暂时无法确认。"
+LOW_CONFIDENCE_MESSAGE = "当前知识库没有足够确定的信息，暂时无法确认。"
+HANDOFF_TERMS = ("订单", "物流", "退款", "售后", "会员", "账户", "提现", "发票")
+
+
+def _needs_handoff(user_message: str) -> bool:
+    """业务关键问题在无法作答时建议转人工，而不是让用户自行猜测。"""
+    return any(term in user_message for term in HANDOFF_TERMS)
+
+
 class KnowledgeRAGAgent:
     """检索长期知识库，并根据检索结果回答问题。"""
 
@@ -21,14 +32,21 @@ class KnowledgeRAGAgent:
         # R2：空消息列表防御，避免 IndexError。
         if not state.get("messages"):
             return {
-                "final_response": "当前知识库没有相关信息，暂时无法确认。",
+                "final_response": REFUSAL_MESSAGE,
                 "sub_results": {
                     **state.get("sub_results", {}),
-                    "knowledge_rag": "当前知识库没有相关信息，暂时无法确认。",
+                    "knowledge_rag": REFUSAL_MESSAGE,
                     "sources": [],
+                    "knowledge_decision": "refuse",
+                    "handoff_required": False,
                 },
             }
         user_message = state["messages"][-1].content
+        base = {
+            **state.get("sub_results", {}),
+            "knowledge_decision": "answer",
+            "handoff_required": False,
+        }
 
         # 按原项目流程：先把用户问题改写成更适合向量检索的查询。
         search_query = await self.rewrite_query(user_message)
@@ -47,6 +65,8 @@ class KnowledgeRAGAgent:
                     "knowledge_rag": message,
                     "sources": [],
                     "knowledge_error": "embedding_unavailable",
+                    "knowledge_decision": "degraded",
+                    "handoff_required": True,
                 },
             }
 
@@ -57,13 +77,18 @@ class KnowledgeRAGAgent:
             top_k=3,
         )
 
-        if not results:
+        top_score = max((float(item.get("score", 0.0)) for item in results), default=0.0)
+        if not results or top_score < MIN_ANSWER_SCORE:
+            message = REFUSAL_MESSAGE if not results else LOW_CONFIDENCE_MESSAGE
             return {
-                "final_response": "当前知识库没有相关信息，暂时无法确认。",
+                "final_response": message,
                 "sub_results": {
-                    **state.get("sub_results", {}),
-                    "knowledge_rag": "当前知识库没有相关信息，暂时无法确认。",
+                    **base,
+                    "knowledge_rag": message,
                     "sources": [],
+                    "knowledge_decision": "refuse",
+                    "handoff_required": _needs_handoff(user_message),
+                    "knowledge_confidence": top_score,
                 },
             }
 
@@ -100,7 +125,7 @@ class KnowledgeRAGAgent:
         return {
             "final_response": response.content,
             "sub_results": {
-                **state.get("sub_results", {}),
+                **base,
                 "knowledge_rag": response.content,
                 "sources": [result["source"] for result in results],
                 "knowledge_rag_context": [
@@ -111,6 +136,9 @@ class KnowledgeRAGAgent:
                     }
                     for result in results
                 ],
+                "knowledge_decision": "answer",
+                "handoff_required": False,
+                "knowledge_confidence": top_score,
             },
         }
 

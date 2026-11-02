@@ -15,6 +15,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from auth.database import create_user
 from auth.security import create_access_token
+from evaluation.metrics import score_case
 from memory.long_term import LongTermMemory
 
 
@@ -67,20 +68,15 @@ async def main() -> None:
             answer = response.json().get("response", "") if response.is_success else ""
             response_data = response.json() if response.is_success else {}
             sources = [item.get("source") for item in retrieved]
-            expected_source = case["expected_source"]
-            retrieval_correct = (
-                any(str(source).startswith(expected_source) for source in sources)
-                if expected_source
-                else not sources
-            )
+            metrics = score_case(case, sources, answer, response_data)
             answer_correct = all(
-                keyword in answer for keyword in case["expected_keywords"]
+                keyword in answer for keyword in case.get("expected_keywords", [])
             )
 
             item = {
                 **case,
                 "retrieved_sources": sources,
-                "retrieval_correct": retrieval_correct,
+                **metrics,
                 "answer": answer,
                 "answer_correct": answer_correct,
                 "intent": response_data.get("intent", ""),
@@ -92,17 +88,25 @@ async def main() -> None:
             }
             results.append(item)
             print(
-                f"{case['id']}: retrieval={retrieval_correct} "
+                f"{case['id']}: recall={metrics['recall_at_k']} "
+                f"citation={metrics['citation_correct']} "
+                f"refusal={metrics['refusal_correct']} handoff={metrics['handoff_correct']} "
                 f"answer={answer_correct} latency={elapsed_ms}ms"
             )
 
-    retrieval_correct = sum(item["retrieval_correct"] for item in results)
-    answer_correct = sum(item["answer_correct"] for item in results)
+    total = len(results)
+
+    def rate(key: str) -> float:
+        return round(sum(1 for item in results if item.get(key)) / total * 100, 2) if total else 0.0
+
     summary = {
-        "metric": "rag_evaluation",
-        "total": len(results),
-        "retrieval_hit_rate_percent": round(retrieval_correct / len(results) * 100, 2),
-        "answer_accuracy_percent": round(answer_correct / len(results) * 100, 2),
+        "metric": "rag_evaluation_stage4",
+        "total": total,
+        "recall_at_k_percent": rate("recall_at_k"),
+        "citation_correct_rate_percent": rate("citation_correct"),
+        "refusal_accuracy_percent": rate("refusal_correct"),
+        "handoff_accuracy_percent": rate("handoff_correct"),
+        "answer_accuracy_percent": rate("answer_correct"),
         "results": results,
     }
 
@@ -112,8 +116,11 @@ async def main() -> None:
         json.dumps(summary, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    print(f"\n检索命中率: {summary['retrieval_hit_rate_percent']}%")
-    print(f"回答正确率: {summary['answer_accuracy_percent']}%")
+    print(f"\n召回率@k: {summary['recall_at_k_percent']}%")
+    print(f"引用正确率: {summary['citation_correct_rate_percent']}%")
+    print(f"拒答准确率: {summary['refusal_accuracy_percent']}%")
+    print(f"转人工准确率: {summary['handoff_accuracy_percent']}%")
+    print(f"回答关键词命中率: {summary['answer_accuracy_percent']}%")
     print(f"详细结果: {output_path}")
 
 

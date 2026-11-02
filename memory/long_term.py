@@ -337,13 +337,81 @@ class LongTermMemory:
 
         return chunks
 
+    @staticmethod
+    def _terms(text: str) -> list[str]:
+        """英文/数字按词切分，中文按字符二元组切分，供关键词检索使用。"""
+        lowered = text.lower()
+        terms: set[str] = set(re.findall(r"[a-z0-9%]+", lowered))
+        for run in re.findall(r"[\u4e00-\u9fff]+", lowered):
+            if len(run) == 1:
+                terms.add(run)
+            else:
+                terms.update(run[i:i + 2] for i in range(len(run) - 1))
+        return list(terms)
+
+    def _keyword_hits(
+        self,
+        query: str,
+        top_k: int,
+        min_keyword_score: float = 0.3,
+    ) -> list[tuple[dict, float]]:
+        """关键词近邻检索：按查询词在文档中的命中比例打分。"""
+        terms = self._terms(query)
+        if not terms:
+            return []
+        today = date.today().isoformat()
+        scored: list[tuple[dict, float]] = []
+        for document in self.documents:
+            metadata = document.get("metadata", {})
+            if metadata.get("expiration_date") and metadata["expiration_date"] < today:
+                continue
+            content = document.get("content", "").lower()
+            hits = sum(1 for term in terms if term in content)
+            if not hits:
+                continue
+            score = hits / len(terms)
+            if score >= min_keyword_score:
+                scored.append((document, score))
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return scored[:top_k]
+
+    def _fuse(
+        self,
+        vector_hits: list[tuple[dict, float]],
+        keyword_hits: list[tuple[dict, float]],
+        top_k: int,
+    ) -> list[dict]:
+        """Reciprocal Rank Fusion：合并向量与关键词两路排名。"""
+        fused: dict[str, dict] = {}
+        for source, hits in (("vector", vector_hits), ("keyword", keyword_hits)):
+            for rank, (document, score) in enumerate(hits):
+                entry = fused.setdefault(document["content"], {
+                    "document": document,
+                    "vector_score": 0.0,
+                    "keyword_score": 0.0,
+                    "rrf": 0.0,
+                })
+                entry[f"{source}_score"] = max(entry[f"{source}_score"], score)
+                entry["rrf"] += 1.0 / (60 + rank + 1)
+        ordered = sorted(fused.values(), key=lambda entry: entry["rrf"], reverse=True)
+        results = []
+        for entry in ordered[:top_k]:
+            document = entry["document"].copy()
+            document["score"] = round(max(entry["vector_score"], entry["keyword_score"]), 4)
+            document["vector_score"] = round(entry["vector_score"], 4)
+            document["keyword_score"] = round(entry["keyword_score"], 4)
+            document["retrieval"] = "hybrid"
+            results.append(document)
+        return results
+
     async def search(
         self,
         query: str,
         top_k: int = 5,
         min_score: float = 0.6,
+        hybrid: bool = True,
     ) -> list[dict]:
-        """根据问题搜索最相关的知识文档。"""
+        """向量 + 关键词混合检索；FAISS 不可用时退化为关键词检索。"""
         if self.index_build_failed:
             raise EmbeddingUnavailable("Knowledge index update did not complete")
         if not self.documents:
@@ -359,30 +427,31 @@ class LongTermMemory:
         # 添加文档时做过归一化，查询向量也必须使用相同处理。
         faiss.normalize_L2(query_array)
 
-        # FAISS 返回相似度分数和文档在索引中的下标。
-        scores, indices = self.index.search(
-            query_array,
-            len(self.documents),
-        )
+        # 候选集放大后再融合，避免只取 top_k 漏掉关键词命中的文档。
+        candidate_k = min(len(self.documents), max(top_k * 4, 20))
+        scores, indices = self.index.search(query_array, candidate_k)
 
-        results = []
+        vector_hits: list[tuple[dict, float]] = []
         for score, index in zip(scores[0], indices[0]):
-            if index < 0:
+            if index < 0 or index >= len(self.documents):
                 continue
-
             if score < min_score:
                 continue
-
-            document = self.documents[index].copy()
+            document = self.documents[index]
             metadata = document.get("metadata", {})
             if metadata.get("expiration_date") and metadata["expiration_date"] < date.today().isoformat():
                 continue
-            document["score"] = float(score)
-            results.append(document)
-            if len(results) >= top_k:
-                break
+            vector_hits.append((document, float(score)))
 
-        return results
+        if not hybrid:
+            return [
+                {**document, "score": score, "retrieval": "vector"}
+                for document, score in vector_hits[:top_k]
+            ]
+
+        keyword_hits = self._keyword_hits(query, candidate_k)
+        return self._fuse(vector_hits, keyword_hits, top_k)
+
     def _fallback_search(
         self,
         query: str,

@@ -7,15 +7,18 @@ from pathlib import Path
 import yaml
 
 POLICY_PATH = Path(__file__).resolve().parents[1] / "knowledge_base" / "POL-AFTER-MVP-001.md"
+SPECIAL_POLICY_PATH = Path(__file__).resolve().parents[1] / "knowledge_base" / "POL-AFTER-SPECIAL-001.md"
 
 
-def _policy_reference(section: str) -> str:
+def _policy_reference(section: str, product_type: str = "normal") -> str:
+    path = SPECIAL_POLICY_PATH if product_type == "special" else POLICY_PATH
+    expected_rule_set = "after_sales_special_1" if product_type == "special" else "after_sales_mvp_1"
     try:
-        parts = POLICY_PATH.read_text(encoding="utf-8").split("---", 2)
+        parts = path.read_text(encoding="utf-8").split("---", 2)
         if len(parts) != 3 or parts[0].strip():
             return ""
         policy = yaml.safe_load(parts[1])
-        if not isinstance(policy, dict) or policy.get("status") != "published" or policy.get("superseded_by") or policy.get("rule_set") != "after_sales_mvp_1":
+        if not isinstance(policy, dict) or policy.get("status") != "published" or policy.get("superseded_by") or policy.get("rule_set") != expected_rule_set:
             return ""
         start = date.fromisoformat(str(policy["effective_date"]))
         end = date.fromisoformat(str(policy["expiration_date"])) if policy.get("expiration_date") else None
@@ -38,8 +41,12 @@ def evaluate(application_type: str | None, product_type: str | None,
     """Determine eligibility for submission; accepted requests still need review."""
     if application_type not in {"no_reason", "quality_issue"}:
         return PolicyDecision("manual_review", "申请类型未确认", "")
-    if product_type != "normal":
+    if product_type not in {"normal", "special"}:
         return PolicyDecision("manual_review", "商品类型未确认或需要特殊审核", "")
+    if product_type == "special":
+        # 特殊商品不适用普通商品无理由退货规则，统一人工核验。
+        reference = _policy_reference("质量问题", "special")
+        return PolicyDecision("manual_review", "特殊商品需人工核验", reference)
     reference = _policy_reference("质量问题" if application_type == "quality_issue" else "无理由退货")
     if not reference:
         return PolicyDecision("manual_review", "售后政策不可用，需要人工核验", "")
