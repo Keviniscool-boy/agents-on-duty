@@ -1,0 +1,161 @@
+"""Stage 5 tests: request trace, model-call observability, fault coverage, suite."""
+
+import asyncio
+import json
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, HumanMessage
+
+from agents.compliance_checker import ComplianceCheckerAgent
+from agents.ticket_handler import TicketHandlerAgent
+from evaluation.suite import build_report, compare
+from tracing.admin_audit import list_events, trace_scope
+from tracing.llm import TracedChatModel
+from tracing.otel_config import get_metrics
+
+
+@pytest.fixture
+def isolated_auth(tmp_path, monkeypatch):
+    from auth import database
+
+    monkeypatch.setattr(database, "DATABASE_PATH", tmp_path / "auth.sqlite")
+    database.init_database()
+    return database
+
+
+class ReplyLLM:
+    def __init__(self, content: str):
+        self.content = content
+
+    async def ainvoke(self, messages, **kwargs):
+        return AIMessage(content=self.content)
+
+
+class InnerModel:
+    model_name = "stage5-test-model"
+
+    async def ainvoke(self, messages, **kwargs):
+        return AIMessage(content="ok")
+
+
+class BoomModel:
+    model_name = "stage5-boom"
+
+    async def ainvoke(self, messages, **kwargs):
+        raise ValueError("boom")
+
+
+def test_trace_id_header_is_generated_and_forwarded():
+    from api.main import app
+
+    client = TestClient(app)
+    response = client.get("/health")
+    trace_id = response.headers.get("x-trace-id")
+    assert response.status_code == 200
+    assert trace_id and len(trace_id) == 32
+
+    forwarded = client.get("/health", headers={"X-Trace-Id": "custom-trace-id"})
+    assert forwarded.headers.get("x-trace-id") == "custom-trace-id"
+
+
+def test_traced_chat_model_records_metrics_and_event(isolated_auth):
+    model = TracedChatModel(InnerModel(), "stage5-test-model")
+    with trace_scope("stage5-trace", "actor", "session"):
+        asyncio.run(model.ainvoke([]))
+
+    summary = get_metrics().get_summary()
+    assert summary["model_calls"]["stage5-test-model"]["total_calls"] >= 1
+    events = list_events(20, kind="model", trace_id="stage5-trace")
+    assert events[0]["action"] == "stage5-test-model"
+    assert events[0]["outcome"] == "success"
+
+    boom = TracedChatModel(BoomModel(), "stage5-boom")
+    with trace_scope("stage5-boom-trace", "actor", "session"):
+        with pytest.raises(ValueError):
+            asyncio.run(boom.ainvoke([]))
+    error_events = list_events(20, kind="model", trace_id="stage5-boom-trace")
+    assert error_events[0]["outcome"] == "error"
+    assert "ValueError" in error_events[0]["detail"]
+
+
+def test_compliance_invalid_json_is_rejected():
+    agent = ComplianceCheckerAgent(ReplyLLM("not json"))
+    result = asyncio.run(agent.llm_check("问题", "回答", []))
+    assert result.passed is False
+    assert result.risk_level == "medium"
+    assert "invalid JSON" in result.violations[0]
+
+
+def test_mcp_timeout_falls_back_to_local_tool(monkeypatch, tmp_path):
+    from mcp_tools.order_server import server as local_server
+
+    monkeypatch.setenv("AFTER_SALES_DB_PATH", str(tmp_path / "after.sqlite"))
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+    class TimeoutMCP:
+        async def list_tools(self):
+            from types import SimpleNamespace
+
+            return SimpleNamespace(tools=await local_server.list_tools())
+
+        async def call_tool(self, name, arguments):
+            raise TimeoutError("mcp timeout")
+
+    class ToolLLM:
+        def bind_tools(self, tools):
+            return self
+
+        async def ainvoke(self, messages):
+            return AIMessage(
+                content="",
+                tool_calls=[{"name": "order_list", "args": {}, "id": "call-1"}],
+            )
+
+    agent = TicketHandlerAgent(ToolLLM(), TimeoutMCP())
+    result = asyncio.run(agent.process({
+        "messages": [HumanMessage(content="我的订单")],
+        "user_id": "timeout-user",
+        "session_id": "timeout-session",
+        "sub_results": {},
+    }))
+    tool_result = result["sub_results"]["ticket_handler_tool_results"][0]
+    assert tool_result["fallback_used"] is True
+    assert tool_result["error_type"] == "timeout"
+    assert tool_result["tool"] == "order_list"
+
+
+def test_suite_report_and_compare():
+    report = build_report("stage5", [{"case": "a", "passed": True}, {"case": "b", "passed": False}])
+    assert report["summary"] == {"passed": 1, "failed": 1}
+    assert report["failures"][0]["case"] == "b"
+    assert report["suite_version"]
+
+    same = compare(report, dict(report))
+    assert same["comparable"] is True
+
+    different = dict(report)
+    different["model"] = "another-model"
+    mismatch = compare(report, different)
+    assert mismatch["comparable"] is False
+    assert "model" in mismatch["reasons"]
+
+
+def test_manifest_covers_required_scenarios():
+    manifest = json.loads((Path(__file__).parent / "evaluation" / "manifest.json").read_text(encoding="utf-8"))
+    covered = set()
+    for suite in manifest["suites"].values():
+        covered.update(suite.get("scenarios", []))
+    assert set(manifest["required_scenarios"]) <= covered
+
+
+def test_stage5_suite_checks_pass():
+    from evaluation.run_stage5_suite import run_checks
+
+    results = run_checks()
+    assert results and all(item["passed"] for item in results), results

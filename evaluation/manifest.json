@@ -1,0 +1,45 @@
+{
+  "suite_version": "2026.11-stage5",
+  "suites": {
+    "rag": {
+      "cases": "rag_cases.jsonl",
+      "runner": "run_rag_eval.py",
+      "scenarios": ["normal", "refusal", "handoff"]
+    },
+    "routing": {
+      "cases": "routing_cases.jsonl",
+      "runner": "run_routing_eval.py",
+      "scenarios": ["normal", "unauthorized"]
+    },
+    "compliance": {
+      "cases": "compliance_cases.jsonl",
+      "runner": "run_compliance_eval.py",
+      "scenarios": ["normal"]
+    },
+    "memory": {
+      "runner": "run_memory_eval.py",
+      "scenarios": ["recovery", "degradation"]
+    },
+    "mcp": {
+      "runner": "run_mcp_eval.py",
+      "scenarios": ["timeout", "fallback"]
+    },
+    "after_sales": {
+      "tests": [
+        "test_idempotency_and_limits.py",
+        "test_human_in_the_loop.py",
+        "test_after_sales.py"
+      ],
+      "scenarios": ["normal", "unauthorized", "recovery", "idempotency"]
+    }
+  },
+  "required_scenarios": [
+    "normal",
+    "unauthorized",
+    "refusal",
+    "handoff",
+    "recovery",
+    "idempotency"
+  ],
+  "regression_matrix": "docs/regression-matrix.md"
+}

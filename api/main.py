@@ -78,6 +78,8 @@ from storage.after_sales import (
 )
 from tracing.otel_config import get_metrics, init_tracer, trace_agent_call
 from tracing.admin_audit import trace_scope, list_events, list_runs
+from tracing.llm import TracedChatModel
+from tracing.request_context import TraceIdMiddleware, get_request_id
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -108,11 +110,14 @@ async def lifespan(app: FastAPI):
         otlp_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
     )
 
-    llm = ChatOpenAI(
-        model=os.getenv("MODEL_NAME"),
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        base_url=os.getenv("OPENAI_BASE_URL"),
-        temperature=0,
+    llm = TracedChatModel(
+        ChatOpenAI(
+            model=os.getenv("MODEL_NAME"),
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=os.getenv("OPENAI_BASE_URL"),
+            temperature=0,
+        ),
+        os.getenv("MODEL_NAME", "") or "chat",
     )
     graph = create_supervisor_graph(
         llm,
@@ -149,6 +154,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# 阶段五：为每个 HTTP 请求生成/透传 X-Trace-Id，写入审计与响应头。
+app.add_middleware(TraceIdMiddleware)
 
 # B5：CORS 白名单化。默认只放行本地前端；部署时用
 # CORS_ALLOW_ORIGINS="https://app.example.com,https://admin.example.com" 覆盖。
@@ -243,6 +251,8 @@ class ChatResponse(BaseModel):
     # 阶段四：知识库回答的决策（answer / refuse / degraded）与转人工建议。
     knowledge_decision: str = ""
     handoff_required: bool = False
+    # 阶段五：本次请求的 trace ID（同时通过 X-Trace-Id 响应头返回）。
+    trace_id: str = ""
 
 
 # 登录限流：同一 IP + 用户名在窗口期内最多尝试 LOGIN_MAX_ATTEMPTS 次。
@@ -433,12 +443,12 @@ async def _resume_handoff(refund_id: str, actor_id: str = "") -> dict:
             if not any(isinstance(item.value, dict) and item.value.get("refund_id") == refund_id and item.value.get("user_id") == event["user_id"] for item in interrupts):
                 raise RuntimeError("Interrupt does not match refund")
             decision = {"action": event["action"], "note": event["note"], "operator": event["operator"]}
-            with trace_scope(uuid.uuid4().hex, actor_id, event["session_id"]):
+            with trace_scope(get_request_id() or uuid.uuid4().hex, actor_id, event["session_id"]):
                 result = await asyncio.wait_for(graph.ainvoke(Command(resume=decision), config=config), timeout=120)
         else:
             if (values.get("handoff_decision") or {}).get("action") != event["action"]:
                 raise RuntimeError("Checkpoint has no matching decision")
-            with trace_scope(uuid.uuid4().hex, actor_id, event["session_id"]):
+            with trace_scope(get_request_id() or uuid.uuid4().hex, actor_id, event["session_id"]):
                 result = await asyncio.wait_for(graph.ainvoke(None, config=config), timeout=120) if state.next else values
         response = result.get("final_response") or "人工审核已完成。"
         if not await asyncio.to_thread(finish_handoff, event["id"], token, response):
@@ -632,7 +642,7 @@ def grant_user_role(
     return {"user": dict(row)}
 
 
-ADMIN_AUDIT_KINDS = {"role", "compliance", "node", "tool"}
+ADMIN_AUDIT_KINDS = {"role", "compliance", "node", "tool", "model"}
 
 
 @app.get("/api/admin/users")
@@ -803,6 +813,7 @@ async def _finalize_chat(
         awaiting_human=interrupted,
         knowledge_decision=knowledge_decision,
         handoff_required=handoff_required,
+        trace_id=get_request_id(),
     )
 
 
@@ -818,7 +829,7 @@ async def chat(
     if not await asyncio.to_thread(claim_session_turn, request.session_id, token):
         raise HTTPException(status_code=409, detail="会话正在处理其他请求，请稍后重试")
     try:
-        with trace_scope(uuid.uuid4().hex, current_user["id"], request.session_id):
+        with trace_scope(get_request_id() or uuid.uuid4().hex, current_user["id"], request.session_id):
             return await _chat_locked(request, current_user)
     finally:
         await asyncio.to_thread(release_session_turn, request.session_id, token)
@@ -961,7 +972,7 @@ async def chat_stream(
             finally:
                 await asyncio.to_thread(release_session_turn, session_id, token)
 
-    trace_id = uuid.uuid4().hex
+    trace_id = get_request_id() or uuid.uuid4().hex
     return StreamingResponse(
         locked_stream(),
         media_type="text/event-stream",

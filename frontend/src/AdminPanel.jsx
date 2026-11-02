@@ -17,7 +17,7 @@ const ticketStatusLabels = {
   rejected: "已拒绝",
   cancelled: "已撤回",
 };
-const kindLabels = { role: "角色", compliance: "合规", node: "节点", tool: "工具", business: "售后业务" };
+const kindLabels = { role: "角色", compliance: "合规", node: "节点", tool: "工具", model: "模型", business: "售后业务" };
 const actionLabels = {
   role_changed: "角色变更",
   refund_requested: "申请退款",
@@ -41,6 +41,7 @@ const auditKinds = [
   ["compliance", "合规命中"],
   ["node", "节点"],
   ["tool", "工具"],
+  ["model", "模型调用"],
   ["business", "售后业务"],
 ];
 
