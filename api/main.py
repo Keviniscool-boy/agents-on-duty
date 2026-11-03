@@ -338,8 +338,8 @@ def _check_login_rate_limit(client_ip: str, username: str) -> None:
 
 
 @app.get("/api/tools")
-async def list_tools(current_user: dict = Depends(get_current_user)):
-    """返回 MCP 工具列表，仅允许已登录用户查看。"""
+async def list_tools(operator: dict = Depends(require_role("agent", "admin"))):
+    """返回 MCP 工具列表；运维信息仅限客服/管理员（权限矩阵见测试）。"""
     tools = await mcp_server.list_tools()
     tool_list = tools.tools if hasattr(tools, "tools") else tools
     return {"tools": [tool.model_dump() for tool in tool_list]}
@@ -348,9 +348,11 @@ async def list_tools(current_user: dict = Depends(get_current_user)):
 @app.post("/api/tools/call")
 async def call_tool(
     request: ToolCallRequest,
-    current_user: dict = Depends(get_current_user),
+    operator: dict = Depends(require_role("agent", "admin")),
 ):
-    """调用 MCP 工具，仅允许已登录用户调用。"""
+    """调用 MCP 工具；直接执行工具是运维能力，不对普通用户开放。
+
+    普通用户走业务端点：/api/orders、/api/refunds、/api/chat。"""
     if request.name not in {"order_query", "order_list", "refund_apply", "ticket_create", "knowledge_search", "risk_check"}:
         raise HTTPException(status_code=400, detail="不支持的工具调用")
     arguments = dict(request.arguments)
@@ -361,12 +363,12 @@ async def call_tool(
     if request.name == "ticket_create":
         arguments.pop("session_id", None)
     if request.name in {"order_query", "order_list", "refund_apply", "risk_check", "ticket_create"}:
-        arguments["user_id"] = current_user["id"]
+        arguments["user_id"] = operator["id"]
     if request.name == "ticket_create":
         from agents.ticket_handler import TicketHandlerAgent
 
         arguments["idempotency_key"] = TicketHandlerAgent.build_idempotency_key(
-            current_user["id"], arguments
+            operator["id"], arguments
         )
     result = await mcp_server.call_tool(
         name=request.name,
@@ -1090,7 +1092,8 @@ async def get_sessions(current_user: dict = Depends(get_current_user)):
 
 
 @app.get("/api/metrics")
-async def get_agent_metrics(current_user: dict = Depends(get_current_user)):
+async def get_agent_metrics(operator: dict = Depends(require_role("agent", "admin"))):
+    """运行指标属于运维信息，仅限客服/管理员查看。"""
     return {"agent_metrics": get_metrics().get_summary()}
 
 
@@ -1115,11 +1118,30 @@ async def register(request: AuthRequest, response: Response):
     return AuthResponse(access_token=token, user=user)
 
 
+def _extract_bearer_token(request: Request) -> str:
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return ""
+
+
 @app.post("/api/auth/logout")
 async def logout(request: Request, response: Response):
-    """清除 Cookie 并撤销当前 JWT，避免登出后令牌继续可用。"""
-    token = request.cookies.get("agent_token")
-    if token:
+    """吊销当前令牌并清除 Cookie，避免登出后令牌继续可用。
+
+    支持两种携带方式：Authorization: Bearer（评测脚本/CLI）与
+    httpOnly Cookie（浏览器）。确定行为：与 get_current_user 的优先级
+    一致，Bearer 优先；若两者同时存在，能解析的有效令牌都执行吊销，
+    保证没有可用残余。无效/过期令牌静默忽略，仍清除 Cookie。
+    """
+    candidates: list[str] = []
+    bearer_token = _extract_bearer_token(request)
+    if bearer_token:
+        candidates.append(bearer_token)
+    cookie_token = request.cookies.get("agent_token")
+    if cookie_token and cookie_token not in candidates:
+        candidates.append(cookie_token)
+    for token in candidates:
         try:
             payload = jwt.decode(
                 token,
@@ -1132,7 +1154,7 @@ async def logout(request: Request, response: Response):
                     datetime.fromtimestamp(payload["exp"], timezone.utc).isoformat(),
                 )
         except (jwt.InvalidTokenError, RuntimeError, ValueError, TypeError):
-            pass
+            continue
     clear_auth_cookie(response)
     return {"detail": "logged out"}
 
