@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from agents.compliance_checker import ComplianceCheckerAgent
 from agents.ticket_handler import TicketHandlerAgent
-from evaluation.suite import build_report, compare
+from evaluation.suite import build_report, compare, corpus_info, dataset_info
 from tracing.admin_audit import list_events, trace_scope
 from tracing.llm import TracedChatModel
 from tracing.otel_config import get_metrics
@@ -144,6 +144,46 @@ def test_suite_report_and_compare():
     mismatch = compare(report, different)
     assert mismatch["comparable"] is False
     assert "model" in mismatch["reasons"]
+
+
+def test_compare_requires_same_dataset_corpus_and_size():
+    dataset_a, dataset_b = {"sha256": "a"}, {"sha256": "b"}
+    corpus_a, corpus_b = {"sha256": "c"}, {"sha256": "d"}
+    base = build_report("stage5", [{"passed": True}], dataset=dataset_a, corpus=corpus_a)
+    same = build_report("stage5", [{"passed": True}], dataset=dataset_a, corpus=corpus_a)
+    assert compare(base, same)["comparable"] is True
+
+    diff_dataset = build_report("stage5", [{"passed": True}], dataset=dataset_b, corpus=corpus_a)
+    result = compare(base, diff_dataset)
+    assert result["comparable"] is False and "dataset" in result["reasons"]
+
+    diff_corpus = build_report("stage5", [{"passed": True}], dataset=dataset_a, corpus=corpus_b)
+    assert "corpus" in compare(base, diff_corpus)["reasons"]
+
+    diff_size = build_report(
+        "stage5",
+        [{"passed": True}, {"passed": False}],
+        dataset=dataset_a,
+        corpus=corpus_a,
+    )
+    assert "sample_size" in compare(base, diff_size)["reasons"]
+
+
+def test_dataset_and_corpus_fingerprints(tmp_path):
+    cases = tmp_path / "cases.jsonl"
+    cases.write_text('{"id": "1"}\n{"id": "2"}\n', encoding="utf-8")
+    info = dataset_info(cases)
+    assert info["cases"] == 2 and len(info["sha256"]) == 64
+
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    (kb / "a.md").write_text("alpha", encoding="utf-8")
+    (kb / "ignore.json").write_text("{}", encoding="utf-8")
+    corpus = corpus_info(kb)
+    assert corpus["documents"] == 1 and len(corpus["sha256"]) == 64
+
+    cases.write_text('{"id": "1"}\n', encoding="utf-8")
+    assert dataset_info(cases)["sha256"] != info["sha256"]
 
 
 def test_manifest_covers_required_scenarios():

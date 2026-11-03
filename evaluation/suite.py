@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -47,17 +48,48 @@ def build_report(
     results: list[dict],
     sample_size: int | None = None,
     extra: dict | None = None,
+    dataset: dict | None = None,
+    corpus: dict | None = None,
 ) -> dict:
     failures = [item for item in results if not item.get("passed", False)]
     return {
         "suite": suite,
         **environment(),
         "sample_size": len(results) if sample_size is None else sample_size,
+        "dataset": dataset or {},
+        "corpus": corpus or {},
         "results": results,
         "failures": failures,
         "summary": {"passed": len(results) - len(failures), "failed": len(failures)},
         **(extra or {}),
     }
+
+
+def file_sha256(path: str | Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def dataset_info(path: str | Path) -> dict:
+    """Fingerprint the evaluation cases so different datasets are not compared."""
+    target = Path(path)
+    count = len([line for line in target.read_text(encoding="utf-8").splitlines() if line.strip()])
+    return {"path": target.name, "sha256": file_sha256(target), "cases": count}
+
+
+def corpus_info(kb_dir: str | Path) -> dict:
+    """Fingerprint every policy/document file used for retrieval."""
+    root = Path(kb_dir)
+    digest = hashlib.sha256()
+    files = sorted(
+        path for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".md", ".txt"}
+    )
+    for path in files:
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return {"path": root.name, "sha256": digest.hexdigest(), "documents": len(files)}
 
 
 def write_report(report: dict, path: str | Path | None = None) -> Path:
@@ -70,9 +102,20 @@ def write_report(report: dict, path: str | Path | None = None) -> Path:
 COMPARABLE_KEYS = ("suite_version", "model", "embedding_model", "embedding_provider")
 
 
+def _digest(report: dict, key: str) -> str:
+    return str((report.get(key) or {}).get("sha256", ""))
+
+
 def compare(baseline: dict, candidate: dict) -> dict:
-    """Only report deltas when suite version and model configuration match."""
+    """Only report deltas when suite, model, dataset and corpus all match."""
     reasons = [key for key in COMPARABLE_KEYS if baseline.get(key) != candidate.get(key)]
+    for key in ("dataset", "corpus"):
+        baseline_digest, candidate_digest = _digest(baseline, key), _digest(candidate, key)
+        if (baseline_digest or candidate_digest) and baseline_digest != candidate_digest:
+            reasons.append(key)
+    if baseline.get("sample_size") != candidate.get("sample_size"):
+        reasons.append("sample_size")
+    reasons = list(dict.fromkeys(reasons))
     if reasons:
         return {"comparable": False, "reasons": reasons, "deltas": {}}
     deltas = {}

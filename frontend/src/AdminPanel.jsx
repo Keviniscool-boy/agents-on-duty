@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
+import { createRequestGuard, resolveRows } from "./adminData.js";
 
 const tabs = { overview: "概览", users: "账号", refunds: "退款工单", runs: "运行记录", audit: "操作审计" };
 const roleLabels = { user: "用户", agent: "客服", admin: "管理员" };
@@ -227,6 +228,7 @@ export default function AdminPanel() {
   const [statusFilter, setStatusFilter] = useState("");
   const [kindFilter, setKindFilter] = useState("");
   const [tick, setTick] = useState(0);
+  const guardRef = useRef(createRequestGuard());
 
   const query = useCallback(() => {
     const params = new URLSearchParams({ limit: "20", offset: String(offset) });
@@ -237,12 +239,15 @@ export default function AdminPanel() {
   }, [tab, offset, roleFilter, statusFilter, kindFilter]);
 
   const load = useCallback(async () => {
+    const requestId = guardRef.current.begin();
     setError("");
     setData(null);
     try {
-      setData(await api(`/api/admin/${tab}?${query()}`));
+      const response = await api(`/api/admin/${tab}?${query()}`);
+      // 快速切换标签时，旧请求晚到不得覆盖新标签的数据。
+      if (guardRef.current.isCurrent(requestId)) setData(response);
     } catch (err) {
-      setError(err.message);
+      if (guardRef.current.isCurrent(requestId)) setError(err.message);
     }
   }, [tab, query]);
 
@@ -282,7 +287,7 @@ export default function AdminPanel() {
     }
   }
 
-  const rows = data?.[tab] || data?.events || [];
+  const rows = resolveRows(data, tab);
 
   return (
     <section className="chat-panel admin-panel">
