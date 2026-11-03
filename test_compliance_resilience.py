@@ -142,3 +142,67 @@ def test_fallback_agent_marks_fixed_reply():
 def test_default_timeout_is_fifteen_seconds():
     """默认合规模型超时为 15 秒（可通过 COMPLIANCE_LLM_TIMEOUT_SECONDS 覆盖）。"""
     assert COMPLIANCE_LLM_TIMEOUT_SECONDS == 15.0
+
+
+class RoleAwareSlowLLM:
+    """按 system 提示词区分节点：合规检查故意慢于超时阈值，其余正常回放。"""
+
+    def __init__(self, default_reply, compliance_reply, compliance_delay=1):
+        self.default_reply = default_reply
+        self.compliance_reply = compliance_reply
+        self.compliance_delay = compliance_delay
+
+    async def ainvoke(self, messages, **kwargs):
+        first = messages[0].content if messages else ""
+        if "合规检查 Agent" in first:
+            await asyncio.sleep(self.compliance_delay)
+            return type("R", (), {"content": self.compliance_reply})()
+        return type("R", (), {"content": self.default_reply})()
+
+
+class FakeKB:
+    """最小知识库桩：一条高分命中，避免依赖真实 embedding。"""
+
+    async def search(self, query, top_k=5, min_score=0.5):
+        return [
+            {
+                "content": "普通商品签收后 7×24 小时内可以提交无理由退货申请。",
+                "source": "POL-TEST v1.0 §退货",
+                "score": 0.9,
+            }
+        ]
+
+
+def test_compliance_timeout_flows_through_whole_graph(monkeypatch):
+    """图级：合规 LLM 超时后图继续合成，不留下未定义状态。"""
+    import uuid
+
+    from agents.supervisor import create_supervisor_graph
+    from memory.working_memory import WorkingMemory
+
+    monkeypatch.setattr(
+        "agents.compliance_checker.COMPLIANCE_LLM_TIMEOUT_SECONDS", 0.05
+    )
+    llm = RoleAwareSlowLLM(
+        default_reply="普通商品签收后 7 天内可以申请退货。",
+        compliance_reply=_compliance_json(True),
+    )
+    graph = create_supervisor_graph(llm, FakeKB(), WorkingMemory(redis_url=None), None)
+    config = {"configurable": {"thread_id": f"test-timeout-{uuid.uuid4().hex[:12]}"}}
+    initial_state = {
+        "messages": [HumanMessage(content="退款政策是什么")],
+        "user_id": "test-user",
+        "session_id": "test-session",
+        "intent": "",
+        "current_agent": "",
+        "final_response": "",
+        "compliance_passed": False,
+        "compliance_reason": "",
+        "compliance_retries": 0,
+        "sub_results": {},
+    }
+    result = asyncio.run(graph.ainvoke(initial_state, config=config))
+
+    assert result["final_response"], "超时降级后图必须继续产出回答"
+    assert result["compliance_passed"] is True, "规则通过 + 超时 → 按规则结果继续"
+    assert result["sub_results"]["compliance"]["degraded"] is True
