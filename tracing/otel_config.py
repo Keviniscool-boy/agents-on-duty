@@ -29,6 +29,10 @@ class AgentMetrics:
         self._call_counts: dict[str, int] = {}
         self._total_duration: dict[str, float] = {}
         self._error_counts: dict[str, int] = {}
+        # 阶段五：模型调用次数/耗时/错误，独立于 Agent 节点指标。
+        self._model_counts: dict[str, int] = {}
+        self._model_duration: dict[str, float] = {}
+        self._model_errors: dict[str, int] = {}
         # 存储层降级/恢复计数（A8/B13）：key 形如 "redis->mysql" / "recovered:redis"。
         self._degradation_counts: dict[str, int] = {}
         # R4：计数器加锁——单事件循环下可省，但存在线程池调用时防计数漂移。
@@ -59,6 +63,15 @@ class AgentMetrics:
         with self._lock:
             self._degradation_counts[key] = self._degradation_counts.get(key, 0) + 1
 
+    def record_model_call(self, model_name: str, duration_ms: float, success: bool) -> None:
+        """记录一次真实模型调用（被 TracedChatModel 调用）。"""
+        key = model_name or "unknown"
+        with self._lock:
+            self._model_counts[key] = self._model_counts.get(key, 0) + 1
+            self._model_duration[key] = self._model_duration.get(key, 0.0) + duration_ms
+            if not success:
+                self._model_errors[key] = self._model_errors.get(key, 0) + 1
+
     def record_recovery(self, tier: str) -> None:
         """记录一次存储层恢复（回切成功）。"""
         key = f"recovered:{tier}"
@@ -81,6 +94,16 @@ class AgentMetrics:
 
             if self._degradation_counts:
                 summary["storage_degradation"] = dict(self._degradation_counts)
+
+            if self._model_counts:
+                summary["model_calls"] = {
+                    model_name: {
+                        "total_calls": count,
+                        "avg_duration_ms": self._model_duration[model_name] / count,
+                        "error_rate": self._model_errors.get(model_name, 0) / count,
+                    }
+                    for model_name, count in self._model_counts.items()
+                }
 
         return summary
 
