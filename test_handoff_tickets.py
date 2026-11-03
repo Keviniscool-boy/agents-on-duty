@@ -42,6 +42,7 @@ def _state(message: str, user_id: str = "user-a", session_id: str = "s-1") -> di
     return {
         "messages": [HumanMessage(content=message)],
         "user_id": user_id,
+        "username": "Kevin",
         "session_id": session_id,
         "intent": "ticket_handler",
         "current_agent": "ticket_handler",
@@ -88,6 +89,7 @@ def test_handoff_creates_ticket_without_llm(isolated_tickets):
     assert len(stored) == 1
     assert stored[0]["ticket_id"] == ticket_id
     assert stored[0]["user_id"] == "user-a"
+    assert stored[0]["username"] == "Kevin"
     assert stored[0]["session_id"] == "s-1"
     assert stored[0]["category"] == "handoff"
 

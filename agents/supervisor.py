@@ -23,6 +23,8 @@ class AgentState(TypedDict):
 
     messages: Annotated[list[BaseMessage], add_messages]
     user_id:str
+    # 认证用户的显示名：写进工单/审计，客服能直接认出客户。
+    username: str
     session_id: str
     final_response: str
     intent: str

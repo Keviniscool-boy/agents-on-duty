@@ -630,6 +630,9 @@ article[data-status] .after-sales-row strong::before {
   .ops-panel { position: fixed; right: 0; top: 62px; bottom: 0; box-shadow: var(--shadow-lg); z-index: 20; }
 }
 @media (max-width: 700px) {
+  /* 窄屏：管理/运维 tab 不折行，改为横向滑动，避免"退款工 单"式断字。 */
+  .ops-tabs { overflow-x: auto; }
+  .ops-tabs button { flex: 0 0 auto; white-space: nowrap; padding: 14px 12px; }
   .topbar { padding: 0 16px; }
   .topbar-brand .status-dot, .topbar-brand { font-size: 0; }
   .topbar-brand strong { font-size: 15px; }

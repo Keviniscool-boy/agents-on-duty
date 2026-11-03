@@ -77,6 +77,7 @@ class TicketHandlerAgent:
             "category": "handoff",
             "user_id": user_id,
             "session_id": session_id,
+            "username": state.get("username", ""),
             "idempotency_key": self.build_idempotency_key(
                 user_id,
                 {
@@ -195,7 +196,7 @@ class TicketHandlerAgent:
             # LLM 可能多传无关字段，白名单过滤防止 TypeError。
             allowed = {
                 "title", "description", "priority", "category", "idempotency_key",
-                "user_id", "session_id",
+                "user_id", "session_id", "username",
             }
             return ticket_create(**{key: arguments[key] for key in allowed if key in arguments})
         raise RuntimeError(f"没有本地备用工具: {tool_name}")
@@ -287,8 +288,8 @@ class TicketHandlerAgent:
                     "description": tool.description or "",
                     "parameters": {
                         **tool.input_schema,
-                        "properties": {k: v for k, v in tool.input_schema.get("properties", {}).items() if k not in {"user_id", "request_id", "idempotency_key", "session_id"}},
-                        "required": [k for k in tool.input_schema.get("required", []) if k not in {"user_id", "request_id", "idempotency_key", "session_id"}],
+                        "properties": {k: v for k, v in tool.input_schema.get("properties", {}).items() if k not in {"user_id", "request_id", "idempotency_key", "session_id", "username"}},
+                        "required": [k for k in tool.input_schema.get("required", []) if k not in {"user_id", "request_id", "idempotency_key", "session_id", "username"}],
                     },
                 },
             }

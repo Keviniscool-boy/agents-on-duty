@@ -35,6 +35,7 @@ def create_or_get_ticket(
     idempotency_key: str = "",
     user_id: str = "",
     session_id: str = "",
+    username: str = "",
 ) -> dict:
     """使用唯一幂等键创建工单，重复请求返回第一次结果。"""
     key = idempotency_key or str(uuid.uuid4())
@@ -47,6 +48,7 @@ def create_or_get_ticket(
         "category": category,
         "idempotency_key": key,
         "user_id": user_id,
+        "username": username,
         "session_id": session_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
