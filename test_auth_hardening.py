@@ -94,6 +94,9 @@ def test_secure_cookie_enabled_in_production(isolated_auth, monkeypatch):
         def set_cookie(self, **kwargs):
             captured.update(kwargs)
 
+    # 不依赖本机 .env 的 COOKIE_SECURE/APP_ENV，避免环境相关误报。
+    monkeypatch.delenv("COOKIE_SECURE", raising=False)
+    monkeypatch.delenv("APP_ENV", raising=False)
     monkeypatch.setenv("APP_ENV", "production")
     set_auth_cookie(FakeResponse(), "token")
     assert captured["secure"] is True, "生产环境必须下发 Secure Cookie"

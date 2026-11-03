@@ -69,9 +69,18 @@ def file_sha256(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def dataset_info(path: str | Path) -> dict:
-    """Fingerprint the evaluation cases so different datasets are not compared."""
+def dataset_info(path: str | Path, cases: list[dict] | None = None) -> dict:
+    """Fingerprint the cases actually evaluated (full file or a selected subset)."""
     target = Path(path)
+    if cases is not None:
+        payload = "\n".join(
+            json.dumps(case, ensure_ascii=False, sort_keys=True) for case in cases
+        )
+        return {
+            "path": target.name,
+            "sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+            "cases": len(cases),
+        }
     count = len([line for line in target.read_text(encoding="utf-8").splitlines() if line.strip()])
     return {"path": target.name, "sha256": file_sha256(target), "cases": count}
 
@@ -102,19 +111,57 @@ def write_report(report: dict, path: str | Path | None = None) -> Path:
 COMPARABLE_KEYS = ("suite_version", "model", "embedding_model", "embedding_provider")
 
 
-def _digest(report: dict, key: str) -> str:
-    return str((report.get(key) or {}).get("sha256", ""))
-
-
 def compare(baseline: dict, candidate: dict) -> dict:
-    """Only report deltas when suite, model, dataset and corpus all match."""
+    """Only report deltas when suite, model, dataset, corpus and sample size all match."""
     reasons = [key for key in COMPARABLE_KEYS if baseline.get(key) != candidate.get(key)]
-    for key in ("dataset", "corpus"):
-        baseline_digest, candidate_digest = _digest(baseline, key), _digest(candidate, key)
-        if (baseline_digest or candidate_digest) and baseline_digest != candidate_digest:
+    baseline_dataset = baseline.get("dataset") or {}
+    candidate_dataset = candidate.get("dataset") or {}
+    baseline_corpus = baseline.get("corpus") or {}
+    candidate_corpus = candidate.get("corpus") or {}
+
+    for key, baseline_meta, candidate_meta in (
+        ("dataset", baseline_dataset, candidate_dataset),
+        ("corpus", baseline_corpus, candidate_corpus),
+    ):
+        baseline_digest = str(baseline_meta.get("sha256", ""))
+        candidate_digest = str(candidate_meta.get("sha256", ""))
+        if not baseline_digest or not candidate_digest:
+            reasons.append(f"{key}_missing")
+        elif baseline_digest != candidate_digest:
             reasons.append(key)
-    if baseline.get("sample_size") != candidate.get("sample_size"):
+
+    baseline_cases = baseline_dataset.get("cases")
+    candidate_cases = candidate_dataset.get("cases")
+    if (
+        not isinstance(baseline_cases, int) or baseline_cases <= 0
+        or not isinstance(candidate_cases, int) or candidate_cases <= 0
+    ):
+        reasons.append("dataset_cases_missing")
+    elif baseline_cases != candidate_cases:
+        reasons.append("dataset_cases")
+
+    baseline_size = baseline.get("sample_size")
+    candidate_size = candidate.get("sample_size")
+    if (
+        not isinstance(baseline_size, int) or baseline_size <= 0
+        or not isinstance(candidate_size, int) or candidate_size <= 0
+    ):
+        reasons.append("sample_size_missing")
+    elif baseline_size != candidate_size:
         reasons.append("sample_size")
+    elif isinstance(baseline_cases, int) and baseline_cases > 0 and baseline_size != baseline_cases:
+        reasons.append("dataset_cases_vs_sample_size")
+
+    baseline_documents = baseline_corpus.get("documents")
+    candidate_documents = candidate_corpus.get("documents")
+    if (
+        not isinstance(baseline_documents, int) or baseline_documents <= 0
+        or not isinstance(candidate_documents, int) or candidate_documents <= 0
+    ):
+        reasons.append("corpus_documents_missing")
+    elif baseline_documents != candidate_documents:
+        reasons.append("corpus_documents")
+
     reasons = list(dict.fromkeys(reasons))
     if reasons:
         return {"comparable": False, "reasons": reasons, "deltas": {}}

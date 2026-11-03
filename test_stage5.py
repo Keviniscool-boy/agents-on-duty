@@ -131,15 +131,35 @@ def test_mcp_timeout_falls_back_to_local_tool(monkeypatch, tmp_path):
 
 
 def test_suite_report_and_compare():
-    report = build_report("stage5", [{"case": "a", "passed": True}, {"case": "b", "passed": False}])
+    dataset = {"sha256": "dataset", "cases": 2}
+    corpus = {"sha256": "corpus", "documents": 7}
+    report = build_report(
+        "stage5",
+        [{"case": "a", "passed": True}, {"case": "b", "passed": False}],
+        dataset=dataset,
+        corpus=corpus,
+    )
     assert report["summary"] == {"passed": 1, "failed": 1}
     assert report["failures"][0]["case"] == "b"
     assert report["suite_version"]
 
-    same = compare(report, dict(report))
+    same = compare(
+        report,
+        build_report(
+            "stage5",
+            [{"case": "a", "passed": True}, {"case": "b", "passed": False}],
+            dataset=dataset,
+            corpus=corpus,
+        ),
+    )
     assert same["comparable"] is True
 
-    different = dict(report)
+    different = build_report(
+        "stage5",
+        [{"case": "a", "passed": True}, {"case": "b", "passed": False}],
+        dataset=dataset,
+        corpus=corpus,
+    )
     different["model"] = "another-model"
     mismatch = compare(report, different)
     assert mismatch["comparable"] is False
@@ -147,8 +167,10 @@ def test_suite_report_and_compare():
 
 
 def test_compare_requires_same_dataset_corpus_and_size():
-    dataset_a, dataset_b = {"sha256": "a"}, {"sha256": "b"}
-    corpus_a, corpus_b = {"sha256": "c"}, {"sha256": "d"}
+    dataset_a = {"sha256": "a", "cases": 1}
+    dataset_b = {"sha256": "b", "cases": 1}
+    corpus_a = {"sha256": "c", "documents": 7}
+    corpus_b = {"sha256": "d", "documents": 7}
     base = build_report("stage5", [{"passed": True}], dataset=dataset_a, corpus=corpus_a)
     same = build_report("stage5", [{"passed": True}], dataset=dataset_a, corpus=corpus_a)
     assert compare(base, same)["comparable"] is True
@@ -163,10 +185,38 @@ def test_compare_requires_same_dataset_corpus_and_size():
     diff_size = build_report(
         "stage5",
         [{"passed": True}, {"passed": False}],
-        dataset=dataset_a,
+        dataset={"sha256": "a", "cases": 2},
         corpus=corpus_a,
     )
-    assert "sample_size" in compare(base, diff_size)["reasons"]
+    reasons = compare(base, diff_size)["reasons"]
+    assert "sample_size" in reasons and "dataset_cases" in reasons
+
+
+def test_compare_requires_complete_metadata():
+    empty = build_report("stage5", [{"passed": True}])
+    with_meta = build_report(
+        "stage5",
+        [{"passed": True}],
+        dataset={"sha256": "a", "cases": 1},
+        corpus={"sha256": "c", "documents": 7},
+    )
+    result = compare(empty, with_meta)
+    assert result["comparable"] is False
+    assert "dataset_missing" in result["reasons"]
+    assert "corpus_missing" in result["reasons"]
+    assert compare(empty, build_report("stage5", [{"passed": True}]))["comparable"] is False
+
+
+def test_dataset_cases_must_match_sample_size():
+    report = build_report(
+        "stage5",
+        [{"passed": True}],
+        dataset={"sha256": "a", "cases": 2},
+        corpus={"sha256": "c", "documents": 7},
+    )
+    result = compare(report, dict(report))
+    assert result["comparable"] is False
+    assert "dataset_cases_vs_sample_size" in result["reasons"]
 
 
 def test_dataset_and_corpus_fingerprints(tmp_path):
@@ -174,6 +224,9 @@ def test_dataset_and_corpus_fingerprints(tmp_path):
     cases.write_text('{"id": "1"}\n{"id": "2"}\n', encoding="utf-8")
     info = dataset_info(cases)
     assert info["cases"] == 2 and len(info["sha256"]) == 64
+
+    selected = dataset_info(cases, cases=[{"id": "1"}])
+    assert selected["cases"] == 1 and selected["sha256"] != info["sha256"]
 
     kb = tmp_path / "kb"
     kb.mkdir()
