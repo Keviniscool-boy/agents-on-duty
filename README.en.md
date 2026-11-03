@@ -34,6 +34,7 @@ Customers can view their orders and requests. Support agents can review the hand
 - **Knowledge answers:** Versioned after-sales / membership / logistics policies, hybrid keyword+vector retrieval with source snippets, and refusal + human-handoff guidance when evidence is missing or low-confidence.
 - **Pi knowledge experiment:** An isolated Pi agent for multi-source retrieval and cited answers over the stable knowledge API/MCP; business workflows remain in LangGraph.
 - **Orchestration and resilience:** Supervisor routing, compliance checks, MCP tools, storage fallback, request trace IDs, and SSE progress.
+- **Testing and regression:** Versioned evaluation suites (RAG / routing / compliance / after-sales / Pi comparison) with dataset/corpus fingerprints, sample sizes, results and failure cases; CI includes a Docker build/start smoke test.
 
 ## 🚀 Quick Start
 
@@ -67,7 +68,13 @@ Chat requests pause the agent workflow; requests created directly on the orders 
 
 ## Next steps
 
-Improve administration and audit, knowledge versioning and permissions, and real business-system integration. A Pi knowledge-assistant experiment remains under consideration. See the [roadmap](docs/optimization-roadmap.md).
+Stages 1–6 of the roadmap are merged. Next:
+
+- run the Pi vs LangGraph RAG comparison with real models/embeddings and add assertion-level citation/claim checks;
+- add knowledge publishing and permissions, plus real business-system integration;
+- keep Pi as a knowledge-only experiment; refunds, approvals, permissions, idempotency and audit stay in LangGraph + FastAPI.
+
+See the [roadmap](docs/optimization-roadmap.md).
 
 Try these three questions and watch the agent trace chips under each reply:
 

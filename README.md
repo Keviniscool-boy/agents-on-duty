@@ -42,11 +42,12 @@ Agents on Duty 是一个可运行的客服 Agent 学习项目。它可以回答�
 - **业务编排与合规** —— Supervisor 分流请求，生成的业务回答经过规则和模型检查，未通过时重写或使用兜底话术。
 - **工具与故障处理** —— MCP 调用失败时可使用本地备用工具；对话与工作上下文支持存储降级。
 - **身份与可观测性** —— 账号、角色和会话归属校验；每个请求带 `X-Trace-Id`，记录节点/工具/模型调用、错误与降级原因；SSE 展示处理进度，运维面板展示 Agent 指标与审计。
+- **测试与回归** —— 版本化评测套件（RAG / 路由 / 合规 / 售后 / Pi 对比），记录数据集与语料指纹、样本量、结果与失败案例；CI 含 Docker 构建/启动烟测。
 
 ## 🚀 快速开始
 
 > [!TIP]
-> 需要 Docker、一个 OpenAI 兼容的聊天模型，以及一个 embedding 服务——配置 `DASHSCOPE_API_KEY` 走阿里云原生接口，或留空复用 `OPENAI_BASE_URL` 走任何 OpenAI 兼容接口。首次启动会为 `knowledge_base/` 中的文本生成向量索引。
+> 需要 Docker、一个 OpenAI 兼容的聊天模型，以及一个 embedding 服务——配置 `DASHSCOPE_API_KEY` 走阿里云原生接口，或留空复用 `OPENAI_BASE_URL` 走任何 OpenAI 兼容接口。首次启动会为 `knowledge_base/` 中的政策文档生成向量索引。
 
 Embedding 服务故障时，知识库问答会提示暂不可用。启动时索引更新失败会保留原索引但暂停知识检索；服务恢复后需重启以重试建库。`/health` 展示最近一次观察到的知识库状态，并非对所有依赖的实时探测。
 
@@ -80,7 +81,13 @@ docker compose up --build -d
 
 ## 🛠️ 后续方向
 
-继续完善管理员运营与审计、知识库的版本和权限、真实业务系统接入，并评估 Pi 知识助手实验。具体计划见 [优化路线图](docs/optimization-roadmap.md)。
+路线图阶段一至六均已合并。后续重点：
+
+- 在真实模型与 embedding 下运行 Pi 与 LangGraph RAG 的对比，并补充断言级的引用/结论对应验证；
+- 知识库发布与权限管理、真实业务系统接入；
+- 保持 Pi 只作为知识问答实验，退款、审批、权限、幂等和审计继续由 LangGraph + FastAPI 负责。
+
+具体计划见 [优化路线图](docs/optimization-roadmap.md)。
 
 ## 🔎 一条消息如何流转
 
