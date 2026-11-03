@@ -90,6 +90,7 @@ async def main() -> None:
             print(
                 f"{case['id']}: recall={metrics['recall_at_k']} "
                 f"citation={metrics['citation_correct']} "
+                f"citation_full={metrics['citation_full']} "
                 f"refusal={metrics['refusal_correct']} handoff={metrics['handoff_correct']} "
                 f"answer={answer_correct} latency={elapsed_ms}ms"
             )
@@ -104,6 +105,7 @@ async def main() -> None:
         "total": total,
         "recall_at_k_percent": rate("recall_at_k"),
         "citation_correct_rate_percent": rate("citation_correct"),
+        "citation_full_rate_percent": rate("citation_full"),
         "refusal_accuracy_percent": rate("refusal_correct"),
         "handoff_accuracy_percent": rate("handoff_correct"),
         "answer_accuracy_percent": rate("answer_correct"),
@@ -117,7 +119,8 @@ async def main() -> None:
         encoding="utf-8",
     )
     print(f"\n召回率@k: {summary['recall_at_k_percent']}%")
-    print(f"引用正确率: {summary['citation_correct_rate_percent']}%")
+    print(f"来源匹配率（初步）: {summary['citation_correct_rate_percent']}%")
+    print(f"完整来源字符串匹配率（非断言级验证）: {summary['citation_full_rate_percent']}%")
     print(f"拒答准确率: {summary['refusal_accuracy_percent']}%")
     print(f"转人工准确率: {summary['handoff_accuracy_percent']}%")
     print(f"回答关键词命中率: {summary['answer_accuracy_percent']}%")

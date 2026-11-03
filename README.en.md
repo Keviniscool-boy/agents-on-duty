@@ -32,6 +32,7 @@ Customers can view their orders and requests. Support agents can review the hand
 - **Pause and resume:** A chat workflow pauses for review; a failed resume can be retried from the workbench.
 - **Admin workspace:** Manage account roles, browse refund tickets by status, inspect agent runs (nodes / tools / failures / fallbacks) and audit logs (roles / compliance / after-sales actions), and track pending and failed tickets.
 - **Knowledge answers:** Versioned after-sales / membership / logistics policies, hybrid keyword+vector retrieval with source snippets, and refusal + human-handoff guidance when evidence is missing or low-confidence.
+- **Pi knowledge experiment:** An isolated Pi agent for multi-source retrieval and cited answers over the stable knowledge API/MCP; business workflows remain in LangGraph.
 - **Orchestration and resilience:** Supervisor routing, compliance checks, MCP tools, storage fallback, request trace IDs, and SSE progress.
 
 ## 🚀 Quick Start

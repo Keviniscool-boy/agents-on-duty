@@ -31,6 +31,12 @@
         "test_after_sales.py"
       ],
       "scenarios": ["normal", "unauthorized", "recovery", "idempotency"]
+    },
+    "pi_comparison": {
+      "cases": "rag_cases.jsonl",
+      "runner": "pi_comparison.py",
+      "scenarios": ["normal", "refusal", "handoff"],
+      "optional": true
     }
   },
   "required_scenarios": [
