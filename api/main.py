@@ -368,6 +368,8 @@ async def call_tool(
     if request.name in {"order_query", "order_list", "refund_apply", "risk_check", "ticket_create"}:
         arguments["user_id"] = operator["id"]
     if request.name == "ticket_create":
+        arguments["username"] = operator.get("username", "")
+    if request.name == "ticket_create":
         from agents.ticket_handler import TicketHandlerAgent
 
         arguments["idempotency_key"] = TicketHandlerAgent.build_idempotency_key(
@@ -826,6 +828,7 @@ async def _prepare_chat(
     initial_state = {
         "messages": [*history_messages, HumanMessage(content=request.message)],
         "user_id": current_user["id"],
+        "username": current_user.get("username", ""),
         "session_id": session_id,
         "intent": "",
         "current_agent": "",

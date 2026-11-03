@@ -233,7 +233,7 @@ export default function WorkbenchPanel() {
               <button className="text-button" onClick={() => setSelectedTicket(ticket)}>
                 <strong>{ticketStatusLabel[ticket.status] || ticket.status} · {ticket.ticket_id}</strong>
                 <p>{ticket.title}</p>
-                <span>{ticket.user_id || "旧工单"} · {ticket.category} · {ticket.priority}</span>
+                <span>{ticket.username || ticket.user_id || "旧工单"} · {ticket.category} · {ticket.priority}</span>
               </button>
             </article>
           ))}
@@ -244,7 +244,7 @@ export default function WorkbenchPanel() {
           <h3>工单详情</h3>
           <section className="panel-card">
             <p><strong>{selectedTicket.ticket_id}</strong> · {ticketStatusLabel[selectedTicket.status] || selectedTicket.status}</p>
-            <p>客户：{selectedTicket.user_id || "旧工单（未记录用户）"}</p>
+            <p>客户：{selectedTicket.username || selectedTicket.user_id || "旧工单（未记录用户）"}</p>
             {selectedTicket.session_id && <p>会话：{selectedTicket.session_id}</p>}
             <p>分类：{selectedTicket.category} · 优先级：{selectedTicket.priority}</p>
             <p>提交时间：{selectedTicket.created_at ? new Date(selectedTicket.created_at).toLocaleString("zh-CN") : "—"}</p>
