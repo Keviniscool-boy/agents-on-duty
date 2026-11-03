@@ -107,7 +107,9 @@ export default function AfterSales() {
         <div className="after-sales-list">
           {orders.map((order) => <article className="after-sales-row" key={order.order_id}>
             <div><strong>{order.product}</strong><p>{order.order_id}</p><span>{orderStatus[order.status] || order.status} · ¥{(order.amount_cents / 100).toFixed(2)}</span></div>
-            <button className="text-button" disabled={busy || order.status !== "delivered"} onClick={() => { requestKey.current = crypto.randomUUID(); setSelected(order.order_id); setReason(""); setApplicationType(""); setError(""); setNotice(""); }}>申请退款</button>
+            {order.status === "delivered"
+              ? <button className="text-button" disabled={busy} onClick={() => { requestKey.current = crypto.randomUUID(); setSelected(order.order_id); setReason(""); setApplicationType(""); setError(""); setNotice(""); }}>申请退款</button>
+              : <span className="muted">{order.status === "cancelled" ? "已取消订单不支持退款申请" : "仅已签收订单可申请退款"}</span>}
           </article>)}
           {orders.length === 0 && <p className="muted">暂无订单</p>}
         </div>

@@ -645,3 +645,28 @@ article[data-status] .after-sales-row strong::before {
   .auth-panel { padding: 30px 24px; }
   .user-menu > span:not(.user-badge) { display: none; }
 }
+
+/* ---------- 本轮产品修复补充样式 ---------- */
+.user-menu .text-button.inverse.active {
+  color: white;
+  background: rgba(255, 255, 255, 0.12);
+  border-bottom: 2px solid var(--brand);
+}
+.composer-error { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.retry-button { border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; }
+.order-cards { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.order-card {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow-sm);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.order-card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.bubble code { background: #f1f5f9; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 13px; }
+.bubble ul { margin: 4px 0; padding-left: 20px; }
+.bubble li { margin: 2px 0; }

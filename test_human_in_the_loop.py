@@ -498,11 +498,15 @@ def test_admin_bootstrap_requires_explicit_local_command(isolated_db, monkeypatc
 
 
 def test_untrusted_tool_cannot_attach_foreign_session(api):
+    """退款直调工具的双层防线：普通用户 403；授权调用者携带外来 session_id 仍被 400 拒绝。"""
     client = TestClient(api)
-    response = client.post("/api/tools/call", headers={"X-Test-User": "user-b"}, json={
+    arguments = {
         "name": "refund_apply",
         "arguments": {"order_id": "anything", "reason": "reason", "idempotency_key": "key", "session_id": "another-users-session"},
-    })
+    }
+    forbidden = client.post("/api/tools/call", headers={"X-Test-User": "user-b"}, json=arguments)
+    assert forbidden.status_code == 403
+    response = client.post("/api/tools/call", headers={"X-Test-User": "user-b", "X-Test-Role": "agent"}, json=arguments)
     assert response.status_code == 400
 
 

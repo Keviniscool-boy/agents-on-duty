@@ -15,7 +15,9 @@ from memory.long_term import LongTermMemory
 
 
 def test_provider_selection_prefers_dashscope_when_key_set(monkeypatch):
-    """配置了 DASHSCOPE_API_KEY 时走 DashScope 原生实现。"""
+    """配置了 DASHSCOPE_API_KEY 时走 DashScope 原生实现（默认模型不受本机 .env 覆盖）。"""
+    # 开发者 .env 可能设置 EMBEDDING_MODEL；本测试只断言默认选择。
+    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
     monkeypatch.setenv("DASHSCOPE_API_KEY", "ds-key")
     embeddings, identity = long_term_module._build_embeddings()
     assert identity["provider"] == "dashscope"

@@ -263,6 +263,9 @@ class ChatResponse(BaseModel):
     # 阶段四：知识库回答的决策（answer / refuse / degraded）与转人工建议。
     knowledge_decision: str = ""
     handoff_required: bool = False
+    # 结构化订单卡片：order_query 工具的可信结果原样下发，前端据此渲染卡片；
+    # 没有结构化数据时前端保持纯文本显示，不从自然语言猜金额或状态。
+    order_cards: list[dict] = []
     # 阶段五：本次请求的 trace ID（同时通过 X-Trace-Id 响应头返回）。
     trace_id: str = ""
 
@@ -850,6 +853,15 @@ async def _finalize_chat(
     sub_results = result.get("sub_results", {}) or {}
     knowledge_decision = sub_results.get("knowledge_decision", "")
     handoff_required = bool(sub_results.get("handoff_required", False))
+    # 只透传 order_query 的可信结构化结果；失败结果与猜测文本一律不下发。
+    order_cards = [
+        entry.get("result")
+        for entry in sub_results.get("ticket_handler_tool_results", [])
+        if entry.get("tool") == "order_query"
+        and isinstance(entry.get("result"), dict)
+        and entry["result"].get("order_id")
+        and not entry["result"].get("error")
+    ]
     response = result["final_response"]
     if interrupted:
         # 图暂停在 human_review：本轮给用户的是等待提示，
@@ -896,6 +908,7 @@ async def _finalize_chat(
         awaiting_human=interrupted,
         knowledge_decision=knowledge_decision,
         handoff_required=handoff_required,
+        order_cards=order_cards,
         trace_id=get_request_id(),
     )
 

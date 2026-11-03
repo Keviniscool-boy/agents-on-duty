@@ -6,9 +6,40 @@ import {
   useState,
 } from "react";
 import { API_URL, api, logout, INTENT_CLASS, INTENT_LABELS } from "./api.js";
+import { renderSafeMarkdown } from "./markdown.js";
 import AfterSales from "./AfterSales.jsx";
 import WorkbenchPanel from "./WorkbenchPanel.jsx";
 import AdminPanel from "./AdminPanel.jsx";
+
+const ORDER_STATUS_LABELS = {
+  delivered: "已签收",
+  cancelled: "已取消",
+  paid: "已支付",
+  shipped: "已发货",
+};
+
+function OrderCards({ cards }) {
+  if (!Array.isArray(cards) || cards.length === 0) return null;
+  return (
+    <div className="order-cards">
+      {cards.map((order) => (
+        <div className="order-card" key={order.order_id}>
+          <div className="order-card-head">
+            <strong>{order.product}</strong>
+            <span className={`chip ${order.status === "cancelled" ? "fail" : "pass"}`}>
+              {ORDER_STATUS_LABELS[order.status] || order.status}
+            </span>
+          </div>
+          <p className="muted">{order.order_id}</p>
+          <span>金额 ¥{((order.amount_cents ?? 0) / 100).toFixed(2)}</span>
+          {order.delivered_at && (
+            <p className="muted">签收时间 {new Date(order.delivered_at).toLocaleString("zh-CN")}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function formatMeta(value, fallback = "—") {
   if (value === null || value === undefined || value === "") return fallback;
@@ -145,6 +176,7 @@ export default function ChatView({ user, onLogout }) {
   const [busy, setBusy] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState("");
+  const [failedMessage, setFailedMessage] = useState("");
   const [showOps, setShowOps] = useState(false);
   const [showAfterSales, setShowAfterSales] = useState(false);
   const [showWorkbench, setShowWorkbench] = useState(false);
@@ -187,14 +219,15 @@ export default function ChatView({ user, onLogout }) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, busy, streamStatus]);
 
-  async function send(event) {
-    event.preventDefault();
-    const message = input.trim();
+  async function sendMessage(message, { isRetry = false } = {}) {
+    message = (message ?? "").trim();
     if (!message || busy) return;
     setInput("");
     setError("");
+    setFailedMessage("");
     setBusy(true);
-    setMessages((old) => [...old, { role: "user", content: message }]);
+    // 失败重试不再重复追加用户气泡（失败时本轮消息已保留在界面上）。
+    if (!isRetry) setMessages((old) => [...old, { role: "user", content: message }]);
     setStreamStatus("正在连接...");
     try {
       // 优先走 SSE 流式端点，实时展示 Agent 处理阶段。
@@ -243,6 +276,7 @@ export default function ChatView({ user, onLogout }) {
                   compliance_passed: data.compliance_passed,
                   compliance_reason: data.compliance_reason,
                   awaiting_human: data.awaiting_human,
+                  order_cards: data.order_cards || [],
                 },
               },
             ]);
@@ -253,13 +287,18 @@ export default function ChatView({ user, onLogout }) {
       }
       await refreshSessions();
     } catch (err) {
-      // 流式失败时移除本轮用户消息，保持界面一致。
-      setMessages((old) => old.slice(0, -1));
-      setError(err.message);
+      // 流式失败：保留本轮用户消息，明确报错并提供重试入口。
+      setFailedMessage(message);
+      setError(err.message || "请求失败，请稍后重试");
     } finally {
       setBusy(false);
       setStreamStatus("");
     }
+  }
+
+  function send(event) {
+    event.preventDefault();
+    sendMessage(input);
   }
 
   function newConversation() {
@@ -285,27 +324,65 @@ export default function ChatView({ user, onLogout }) {
           在线
         </div>
         <div className="user-menu">
-          {user.role === "admin" && <button className="text-button inverse" onClick={() => { setShowAfterSales(false); setShowWorkbench(false); setShowAdmin(v => !v); }}>{showAdmin ? "返回会话" : "管理员"}</button>}
+          {/* 顶部导航：标签固定 + 高亮当前视图，消除"返回会话/会话"文字重复；
+              运维面板仅客服/管理员可见（后端同样做了角色校验）。 */}
+          {user.role === "admin" && (
+            <button
+              className={`text-button inverse ${showAdmin ? "active" : ""}`}
+              onClick={() => {
+                setShowAfterSales(false);
+                setShowWorkbench(false);
+                setShowNav(false);
+                setShowOps(false);
+                setShowAdmin((v) => !v);
+              }}
+            >
+              管理员
+            </button>
+          )}
           {isAgent && (
             <button
-              className="text-button inverse"
-              onClick={() => { setShowAdmin(false); setShowAfterSales(false); setShowWorkbench((v) => !v); }}
+              className={`text-button inverse ${showWorkbench ? "active" : ""}`}
+              onClick={() => {
+                setShowAdmin(false);
+                setShowAfterSales(false);
+                setShowNav(false);
+                setShowOps(false);
+                setShowWorkbench((v) => !v);
+              }}
             >
-              {showWorkbench ? "返回会话" : "客服工作台"}
+              客服工作台
             </button>
           )}
           <button
-            className="text-button inverse"
-            onClick={() => { setShowAdmin(false); setShowWorkbench(false); setShowAfterSales((v) => !v); }}
+            className={`text-button inverse ${showAfterSales ? "active" : ""}`}
+            onClick={() => {
+              setShowAdmin(false);
+              setShowWorkbench(false);
+              setShowNav(false);
+              setShowOps(false);
+              setShowAfterSales((v) => !v);
+            }}
           >
-            {showAfterSales ? "返回会话" : "订单售后"}
+            订单售后
           </button>
-          <button className="text-button inverse" onClick={() => setShowNav((v) => !v)}>
+          <button
+            className={`text-button inverse ${showNav ? "active" : ""}`}
+            onClick={() => {
+              setShowAdmin(false);
+              setShowWorkbench(false);
+              setShowAfterSales(false);
+              setShowOps(false);
+              setShowNav((v) => !v);
+            }}
+          >
             会话
           </button>
-          <button className="text-button inverse" onClick={() => setShowOps((v) => !v)}>
-            {showOps ? "隐藏面板" : "运维面板"}
-          </button>
+          {isAgent && (
+            <button className="text-button inverse" onClick={() => setShowOps((v) => !v)}>
+              {showOps ? "隐藏面板" : "运维面板"}
+            </button>
+          )}
           <span className="user-badge">{user.username[0].toUpperCase()}</span>
           <span>{user.username}</span>
           <button
@@ -320,6 +397,8 @@ export default function ChatView({ user, onLogout }) {
         </div>
       </header>
       <section className={`workspace ${showNav ? "open-nav" : ""}`}>
+        {/* 管理/客服工作视图占满整行，不渲染聊天会话侧栏。 */}
+        {!showAdmin && !showWorkbench && (
         <aside className="sidebar">
           <div className="side-heading">
             <span>我的会话</span>
@@ -356,6 +435,7 @@ export default function ChatView({ user, onLogout }) {
             <code>{sessionId.slice(0, 18)}...</code>
           </div>
         </aside>
+        )}
 
         {showAdmin && user.role === "admin" ? <AdminPanel /> : showWorkbench && isAgent ? <WorkbenchPanel /> : showAfterSales ? <AfterSales /> : <section className="chat-panel">
           <div className="chat-heading">
@@ -373,13 +453,15 @@ export default function ChatView({ user, onLogout }) {
                 <h3>有什么可以帮你？</h3>
                 <p>可以咨询产品政策、查询订单或提交工单。</p>
                 <div className="suggestions">
-                  <button onClick={() => setInput("商品签收后几天内可以申请退货？")}>
+                  <button onClick={() => sendMessage("商品签收后几天内可以申请退货？")} disabled={busy}>
                     退货政策
                   </button>
-                  <button onClick={() => setInput("查询我的订单")}>
+                  <button onClick={() => sendMessage("查询我的订单")} disabled={busy}>
                     我的订单
                   </button>
-                  <button onClick={() => setInput("开户需要准备什么？")}>开户流程</button>
+                  <button onClick={() => sendMessage("开户需要准备什么？")} disabled={busy}>
+                    开户流程
+                  </button>
                 </div>
               </div>
             )}
@@ -390,7 +472,15 @@ export default function ChatView({ user, onLogout }) {
                     {message.role === "user" ? user.username[0].toUpperCase() : "AI"}
                   </div>
                   <div className="bubble-wrap">
-                    <div className="bubble">{message.content}</div>
+                    {message.role === "assistant" ? (
+                      <>
+                        {/* 安全 Markdown：先转义 HTML，再白名单渲染 code/粗体/列表。 */}
+                        <div className="bubble" dangerouslySetInnerHTML={{ __html: renderSafeMarkdown(message.content) }} />
+                        <OrderCards cards={message.meta?.order_cards} />
+                      </>
+                    ) : (
+                      <div className="bubble">{message.content}</div>
+                    )}
                     {message.role === "assistant" && (
                       <TraceChips meta={message.meta} />
                     )}
@@ -432,7 +522,19 @@ export default function ChatView({ user, onLogout }) {
               ↑
             </button>
           </form>
-          {error && <p className="error composer-error">{error}</p>}
+          {error && (
+            <div className="composer-error" role="alert">
+              <p className="error">{error}</p>
+              {failedMessage && !busy && (
+                <button
+                  className="text-button retry-button"
+                  onClick={() => sendMessage(failedMessage, { isRetry: true })}
+                >
+                  重试上一条
+                </button>
+              )}
+            </div>
+          )}
           <p className="chat-footnote">
             回答由 Agent 生成，请以系统记录和公开政策为准
           </p>
