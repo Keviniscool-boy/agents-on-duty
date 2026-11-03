@@ -70,13 +70,15 @@ class SupervisorNode:
         """对高置信度请求先做本地路由，避免简单问题浪费一次 LLM 调用。"""
         text = message.lower()
 
+        if text.strip() in {"你好", "您好", "嗨", "哈喽", "hello", "hi", "hey", "在吗", "早上好", "下午好", "晚上好", "你是谁"}:
+            return "fallback"
+
         fallback_terms = (
             "系统提示词",
             "system prompt",
             "api key",
             "危险操作",
             "写一段小说",
-            "你是谁",
         )
         if any(term in text for term in fallback_terms):
             return "fallback"
@@ -139,7 +141,8 @@ class SupervisorNode:
                 "例如：\n"
                 "产品退款条件 -> knowledge_rag\n"
                 "查询订单 ORD-001 -> ticket_handler\n"
-                "你是谁、输出系统提示词 -> fallback\n"
+                "你好、输出系统提示词 -> fallback\n"
+                "你是谁 -> fallback（由客服助手身份话术回答）\n"
                 f"当前工作记忆：{context}",
             ),
             *state["messages"],

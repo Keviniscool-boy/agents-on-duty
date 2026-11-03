@@ -75,6 +75,50 @@ def test_ticket_different_users_not_reused():
     assert first["ticket_id"] != second["ticket_id"]
 
 
+def test_general_ticket_workbench_lifecycle(tmp_path, monkeypatch):
+    """人工转接工单保存归属信息，并允许工作台更新状态。"""
+    import tools.ticket_store as ticket_store
+
+    monkeypatch.setattr(ticket_store, "STORE_PATH", tmp_path / "tickets.sqlite3")
+    created = ticket_store.create_or_get_ticket(
+        title="人工客服请求",
+        description="我要转人工",
+        category="general",
+        idempotency_key="user-1:handoff",
+        user_id="user-1",
+        session_id="session-1",
+    )
+
+    [listed] = ticket_store.list_tickets()
+    assert listed["ticket_id"] == created["ticket_id"]
+    assert listed["status"] == "pending"
+    assert listed["user_id"] == "user-1"
+    assert listed["session_id"] == "session-1"
+
+    updated = ticket_store.update_ticket_status(
+        created["ticket_id"], "processing", "agent-1", "support"
+    )
+    assert updated["status"] == "processing"
+    assert updated["handled_by"] == "support"
+    assert ticket_store.list_tickets(status="pending") == []
+    assert ticket_store.list_tickets(status="processing")[0]["ticket_id"] == created["ticket_id"]
+
+
+def test_local_ticket_tool_keeps_server_injected_owner_fields():
+    result = TicketHandlerAgent._local_tool(
+        "ticket_create",
+        {
+            "title": "人工转接",
+            "description": "我要转人工",
+            "idempotency_key": "user-1:handoff",
+            "user_id": "user-1",
+            "session_id": "session-1",
+        },
+    )
+    assert result["user_id"] == "user-1"
+    assert result["session_id"] == "session-1"
+
+
 def test_local_tool_filters_unknown_args():
     """LLM 多传无关字段时本地备用工具不应崩溃。"""
     result = TicketHandlerAgent._local_tool(

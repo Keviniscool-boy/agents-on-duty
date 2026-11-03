@@ -12,6 +12,8 @@ def ticket_create(
     priority: str = "medium",
     category: str = "general",
     idempotency_key: str | None = None,
+    user_id: str = "",
+    session_id: str = "",
 ) -> dict:
     """创建工单；相同幂等键重复调用时返回第一次结果。"""
     return create_or_get_ticket(
@@ -20,4 +22,6 @@ def ticket_create(
         priority=priority,
         category=category,
         idempotency_key=idempotency_key or str(uuid.uuid4()),
+        user_id=user_id,
+        session_id=session_id,
     )

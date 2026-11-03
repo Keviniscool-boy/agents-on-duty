@@ -16,9 +16,15 @@ from knowledge.service import (
     initialize_knowledge_memory,
 )
 from memory.long_term import EmbeddingUnavailable
+from agents.ticket_handler import _text_content
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 PI_DIR = PROJECT_ROOT / "experiments" / "pi_knowledge_agent"
+
+
+def test_ticket_handler_normalizes_responses_api_text_blocks():
+    assert _text_content([{"type": "output_text", "text": "订单已查询"}]) == "订单已查询"
+    assert _text_content("订单已查询") == "订单已查询"
 
 
 class FakeMemory:

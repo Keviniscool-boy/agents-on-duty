@@ -292,13 +292,15 @@ def test_restart_recovery_resumes_from_persistent_checkpoint(isolated_db, tmp_pa
 
 
 @pytest.fixture
-def api(isolated_db, monkeypatch):
+def api(isolated_db, monkeypatch, tmp_path):
     from api.main import app
 
     from auth.database import init_database
+    import tools.ticket_store as ticket_store
 
     # 使用隔离的账户库和会话记录，避免写入运行中的服务。
     init_database()
+    monkeypatch.setattr(ticket_store, "STORE_PATH", tmp_path / "tickets.sqlite3")
 
     class FakeHistory:
         def __init__(self):
@@ -331,6 +333,9 @@ def test_workbench_requires_agent_or_admin_role(api):
     assert client.get("/api/workbench/refunds", headers={"X-Test-Role": "user"}).status_code == 403
     assert client.get("/api/workbench/refunds", headers={"X-Test-Role": "agent"}).status_code == 200
     assert client.get("/api/workbench/refunds", headers={"X-Test-Role": "admin"}).status_code == 200
+    assert client.get("/api/workbench/tickets", headers={"X-Test-Role": "user"}).status_code == 403
+    assert client.get("/api/workbench/tickets", headers={"X-Test-Role": "agent"}).status_code == 200
+    assert client.get("/api/workbench/tickets", headers={"X-Test-Role": "admin"}).status_code == 200
     assert client.post(
         "/api/admin/users/role", headers={"X-Test-Role": "agent"},
         json={"username": "nobody", "role": "admin"},
@@ -343,6 +348,39 @@ def test_workbench_requires_agent_or_admin_role(api):
         "/api/admin/users/role", headers={"X-Test-Role": "admin"},
         json={"username": "nobody", "role": "superuser"},
     ).status_code == 400
+
+
+def test_workbench_lists_and_updates_general_handoff_tickets(api):
+    from tools.ticket_store import create_or_get_ticket
+
+    created = create_or_get_ticket(
+        title="人工客服请求",
+        description="用户原话：我要转人工",
+        idempotency_key="user-a:handoff",
+        user_id="user-a",
+        session_id="session-a",
+    )
+    client = TestClient(api)
+    headers = {"X-Test-Role": "agent", "X-Test-Name": "support"}
+    response = client.get("/api/workbench/tickets", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["tickets"][0]["ticket_id"] == created["ticket_id"]
+    assert response.json()["tickets"][0]["session_id"] == "session-a"
+
+    updated = client.post(
+        f"/api/workbench/tickets/{created['ticket_id']}/status",
+        headers=headers,
+        json={"status": "processing"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["ticket"]["handled_by"] == "support"
+
+    forbidden = TestClient(api).post(
+        f"/api/workbench/tickets/{created['ticket_id']}/status",
+        headers={"X-Test-Role": "user"},
+        json={"status": "resolved"},
+    )
+    assert forbidden.status_code == 403
 
 
 def test_workbench_detail_exposes_handoff_payload(api):

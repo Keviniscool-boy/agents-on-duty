@@ -62,6 +62,8 @@ async def ticket_create(
     category:str="general",
     idempotency_key: str = "",
     request_id: str = "",
+    user_id: str = "",
+    session_id: str = "",
 )->dict:
     return create_or_get_ticket(
         title=title,
@@ -69,6 +71,8 @@ async def ticket_create(
         priority=priority,
         category=category,
         idempotency_key=idempotency_key or request_id,
+        user_id=user_id,
+        session_id=session_id,
     )
 
 @server.tool(

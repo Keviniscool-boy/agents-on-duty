@@ -9,18 +9,31 @@ const refundStatus = {
   completed: "已完成",
 };
 const actionLabel = { approve: "批准", reject: "拒绝", need_info: "要求补充" };
+const ticketStatusLabel = {
+  pending: "待处理",
+  created: "待处理",
+  processing: "处理中",
+  resolved: "已解决",
+};
 
 export default function WorkbenchPanel() {
   const [refunds, setRefunds] = useState([]);
+  const [tickets, setTickets] = useState([]);
   const [detail, setDetail] = useState(null);
+  const [selectedTicket, setSelectedTicket] = useState(null);
+  const [queue, setQueue] = useState("refunds");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
   const loadList = useCallback(async () => {
-    const data = await api("/api/workbench/refunds");
-    setRefunds(data.refunds || []);
+    const [refundData, ticketData] = await Promise.all([
+      api("/api/workbench/refunds"),
+      api("/api/workbench/tickets"),
+    ]);
+    setRefunds(refundData.refunds || []);
+    setTickets(ticketData.tickets || []);
   }, []);
 
   useEffect(() => {
@@ -84,11 +97,37 @@ export default function WorkbenchPanel() {
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
 
+  async function updateTicketStatus(status) {
+    if (busy || !selectedTicket) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api(
+        `/api/workbench/tickets/${encodeURIComponent(selectedTicket.ticket_id)}/status`,
+        { method: "POST", body: JSON.stringify({ status }) },
+      );
+      await loadList();
+      setSelectedTicket(result.ticket);
+      setNotice(status === "resolved" ? "工单已标记为解决。" : "工单已开始处理。");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="after-sales" aria-label="客服工作台">
-      <header><h2>客服工作台</h2><p className="muted">处理转人工的退款申请；批准后 Agent 会恢复流程并答复客户。</p></header>
+      <header><h2>客服工作台</h2><p className="muted">处理退款审核和用户提交的人工工单。</p></header>
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="after-sales-notice" role="status">{notice}</p>}
+      <nav className="ops-tabs" aria-label="客服队列">
+        <button className={queue === "refunds" ? "active" : ""} onClick={() => setQueue("refunds")}>退款申请</button>
+        <button className={queue === "tickets" ? "active" : ""} onClick={() => setQueue("tickets")}>人工工单</button>
+        <button onClick={() => loadList().catch((err) => setError(err.message))}>刷新</button>
+      </nav>
+      {queue === "refunds" && <>
       <h3>退款申请</h3>
       <div className="after-sales-list">
         {refunds.map((refund) => (
@@ -184,6 +223,41 @@ export default function WorkbenchPanel() {
           )}
         </>
       )}
+      </>}
+
+      {queue === "tickets" && <>
+        <h3>用户提交的人工工单</h3>
+        <div className="after-sales-list">
+          {tickets.map((ticket) => (
+            <article className={`after-sales-row ${selectedTicket?.ticket_id === ticket.ticket_id ? "active" : ""}`} key={ticket.ticket_id}>
+              <button className="text-button" onClick={() => setSelectedTicket(ticket)}>
+                <strong>{ticketStatusLabel[ticket.status] || ticket.status} · {ticket.ticket_id}</strong>
+                <p>{ticket.title}</p>
+                <span>{ticket.user_id || "旧工单"} · {ticket.category} · {ticket.priority}</span>
+              </button>
+            </article>
+          ))}
+          {tickets.length === 0 && <p className="muted">暂无人工工单</p>}
+        </div>
+
+        {selectedTicket && <>
+          <h3>工单详情</h3>
+          <section className="panel-card">
+            <p><strong>{selectedTicket.ticket_id}</strong> · {ticketStatusLabel[selectedTicket.status] || selectedTicket.status}</p>
+            <p>客户：{selectedTicket.user_id || "旧工单（未记录用户）"}</p>
+            {selectedTicket.session_id && <p>会话：{selectedTicket.session_id}</p>}
+            <p>分类：{selectedTicket.category} · 优先级：{selectedTicket.priority}</p>
+            <p>提交时间：{selectedTicket.created_at ? new Date(selectedTicket.created_at).toLocaleString("zh-CN") : "—"}</p>
+            <p>标题：{selectedTicket.title}</p>
+            <p>用户描述：{selectedTicket.description}</p>
+            {selectedTicket.handled_by && <p>处理人：{selectedTicket.handled_by}</p>}
+          </section>
+          {selectedTicket.status !== "resolved" && <div className="after-sales-actions">
+            {selectedTicket.status !== "processing" && <button className="text-button" disabled={busy} onClick={() => updateTicketStatus("processing")}>开始处理</button>}
+            <button className="primary" disabled={busy} onClick={() => updateTicketStatus("resolved")}>标记已解决</button>
+          </div>}
+        </>}
+      </>}
     </section>
   );
 }

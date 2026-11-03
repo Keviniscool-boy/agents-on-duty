@@ -27,7 +27,8 @@ class SynthesizerAgent:
             return {"final_response": messages[action] + suffix}
         if state.get("current_agent") == "fallback":
             return {
-                "final_response": "抱歉，我暂时无法识别或处理这个问题。",
+                "final_response": state.get("sub_results", {}).get("fallback")
+                or "我还不能确定你需要什么。你是想查询订单、咨询政策，还是办理退款/售后？",
             }
 
         if not state.get("compliance_passed", False):

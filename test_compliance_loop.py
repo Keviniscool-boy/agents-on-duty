@@ -110,8 +110,8 @@ def test_compliance_loop_exhausts_retries_then_falls_back():
     assert result["sub_results"]["rewrite_attempts"] == MAX_COMPLIANCE_RETRIES
     assert result["sub_results"]["compliance"]["passed"] is False
     assert result["current_agent"] == "fallback"
-    # 合成节点对 fallback 走固定降级话术。
-    assert result["final_response"] == "抱歉，我暂时无法识别或处理这个问题。"
+    # 合规重试耗尽后保留 fallback 节点的安全答复。
+    assert result["final_response"] == "我是客服助手，可以帮你查询订单、了解退款/售后政策，或申请售后。"
     # 3 次合规 LLM 检查 + 2 次重写 = 5 次调用。
     assert llm.calls == 2 * MAX_COMPLIANCE_RETRIES + 1
 
@@ -129,4 +129,4 @@ def test_compliance_passes_after_rewrite():
 
     assert result["compliance_retries"] == 1
     assert result["compliance_passed"] is True
-    assert result["final_response"] == "抱歉，我暂时无法识别或处理这个问题。"
+    assert result["final_response"] == "我是客服助手，可以帮你查询订单、了解退款/售后政策，或申请售后。"

@@ -14,6 +14,23 @@ from storage.after_sales import apply_refund, list_orders
 from tracing.otel_config import trace_agent_call
 
 
+def _text_content(content) -> str:
+    """Normalize plain text and OpenAI Responses text blocks for downstream nodes."""
+    if isinstance(content, str):
+        return content
+    if content is None:
+        return ""
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+        return "".join(parts)
+    return str(content)
+
+
 class TicketHandlerAgent:
     def __init__(
         self,
@@ -66,7 +83,10 @@ class TicketHandlerAgent:
             )
         if tool_name == "ticket_create":
             # LLM 可能多传无关字段，白名单过滤防止 TypeError。
-            allowed = {"title", "description", "priority", "category", "idempotency_key"}
+            allowed = {
+                "title", "description", "priority", "category", "idempotency_key",
+                "user_id", "session_id",
+            }
             return ticket_create(**{key: arguments[key] for key in allowed if key in arguments})
         raise RuntimeError(f"没有本地备用工具: {tool_name}")
 
@@ -156,12 +176,13 @@ class TicketHandlerAgent:
         response = await llm_with_tools.ainvoke(messages)
 
         if not response.tool_calls:
+            response_text = _text_content(response.content)
             return {
                 "messages": [response],
-                "final_response": response.content,
+                "final_response": response_text,
                 "sub_results": {
                     **state.get("sub_results", {}),
-                    "ticket_handler": response.content,
+                    "ticket_handler": response_text,
                 },
             }
 
@@ -183,6 +204,9 @@ class TicketHandlerAgent:
                 tool_arguments["user_id"] = state["user_id"]
             # 阶段二：会话号服务端注入，退款单据此关联可恢复的图线程。
             if tool_name == "refund_apply":
+                tool_arguments["session_id"] = state.get("session_id", "")
+            if tool_name == "ticket_create":
+                tool_arguments["user_id"] = state.get("user_id", "")
                 tool_arguments["session_id"] = state.get("session_id", "")
             request_id = tool_call["id"] or str(uuid.uuid4())
             tool_arguments["request_id"] = request_id
@@ -256,20 +280,21 @@ class TicketHandlerAgent:
 
         # 退款单已落库，直接进入持久化中断，不再做第二次模型调用——
         # 模型调用一旦失败，申请就会无人认领。
-        final_response = (
+        final_message = (
             AIMessage(content="您的退款申请已提交人工审核，客服处理后将继续为您跟进。")
             if pending_handoff else await llm_with_tools.ainvoke(messages)
         )
+        final_response = _text_content(final_message.content)
 
         return {
-            "messages": [response, *tool_messages, final_response],
-            "final_response": final_response.content,
+            "messages": [response, *tool_messages, final_message],
+            "final_response": final_response,
             "pending_handoff": pending_handoff,
             # 等待话术未经模型审查，如实标记合规状态，避免下游当作已审内容。
             **({"compliance_passed": False, "compliance_reason": "固定系统等待话术，未执行模型审查"} if pending_handoff else {}),
             "sub_results": {
                 **state.get("sub_results", {}),
-                "ticket_handler": final_response.content,
+                "ticket_handler": final_response,
                 "ticket_handler_tool_results": tool_results,
             },
         }

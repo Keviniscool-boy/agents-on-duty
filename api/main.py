@@ -77,6 +77,7 @@ from storage.after_sales import (
     release_session_turn,
     record_refund_decision,
 )
+from tools.ticket_store import list_tickets, update_ticket_status
 from tracing.otel_config import get_metrics, init_tracer, trace_agent_call
 from tracing.admin_audit import trace_scope, list_events, list_runs
 from tracing.llm import TracedChatModel
@@ -237,6 +238,10 @@ class DecisionRequest(BaseModel):
     note: str = ""
 
 
+class TicketStatusRequest(BaseModel):
+    status: str
+
+
 class RefundInformationRequest(BaseModel):
     content: str
 
@@ -353,7 +358,9 @@ async def call_tool(
         raise HTTPException(status_code=400, detail="会话身份由服务端分配，不能自行指定")
     if request.name == "refund_apply":
         arguments.pop("session_id", None)
-    if request.name in {"order_query", "order_list", "refund_apply", "risk_check"}:
+    if request.name == "ticket_create":
+        arguments.pop("session_id", None)
+    if request.name in {"order_query", "order_list", "refund_apply", "risk_check", "ticket_create"}:
         arguments["user_id"] = current_user["id"]
     if request.name == "ticket_create":
         from agents.ticket_handler import TicketHandlerAgent
@@ -513,6 +520,34 @@ async def _session_history(session_id: str, user_id: str, last_n: int | None = N
 def workbench_refunds(operator: dict = Depends(require_role("agent", "admin"))):
     """客服工作台：退款申请列表（仅 agent/admin 可见）。"""
     return {"refunds": list_refund_reviews()}
+
+
+@app.get("/api/workbench/tickets")
+def workbench_tickets(
+    status: str = "",
+    operator: dict = Depends(require_role("agent", "admin")),
+):
+    """通用人工工单队列，与需审批的退款申请分开。"""
+    return {"tickets": list_tickets(limit=200, status=status)}
+
+
+@app.post("/api/workbench/tickets/{ticket_id}/status")
+def workbench_ticket_status(
+    ticket_id: str,
+    request: TicketStatusRequest,
+    operator: dict = Depends(require_role("agent", "admin")),
+):
+    if request.status not in {"processing", "resolved"}:
+        raise HTTPException(status_code=400, detail="工单状态只能改为处理中或已解决")
+    ticket = update_ticket_status(
+        ticket_id,
+        request.status,
+        operator["id"],
+        operator["username"],
+    )
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="工单不存在")
+    return {"ticket": ticket}
 
 
 @app.get("/api/workbench/refunds/{refund_id}")
