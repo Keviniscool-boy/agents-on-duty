@@ -163,6 +163,7 @@ def test_stage4_metrics_score_answer_refuse_handoff():
     assert answer == {
         "recall_at_k": True,
         "citation_correct": True,
+        "citation_full": True,
         "refusal_correct": True,
         "handoff_correct": True,
     }
@@ -190,6 +191,7 @@ def test_stage4_metrics_score_answer_refuse_handoff():
         {},
     )
     assert wrong["recall_at_k"] is False and wrong["citation_correct"] is False
+    assert wrong["citation_full"] is False
 
 
 def test_finalize_chat_exposes_handoff_decision(monkeypatch):

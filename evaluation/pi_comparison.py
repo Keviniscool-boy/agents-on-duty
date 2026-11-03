@@ -23,7 +23,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from evaluation.metrics import score_case
-from evaluation.suite import environment, write_report
+from evaluation.suite import corpus_info, dataset_info, environment, write_report
+from knowledge.service import KnowledgeUnavailableError, initialize_knowledge_memory
 
 EVALUATION_DIR = Path(__file__).resolve().parent
 PI_DIR = PROJECT_ROOT / "experiments" / "pi_knowledge_agent"
@@ -35,6 +36,7 @@ class RunnerResult:
     sources: list[str] = field(default_factory=list)
     latency_ms: float = 0.0
     cost_usd: float | None = None
+    cost_known: bool = False
     input_tokens: int | None = None
     output_tokens: int | None = None
     error: str = ""
@@ -77,11 +79,13 @@ class SubprocessPiRunner:
                 latency_ms=latency_ms,
                 error=(completed.stderr or completed.stdout or "invalid JSON output").strip()[:500],
             )
+        cost_known = bool(payload.get("cost_known", False))
         return RunnerResult(
             answer=str(payload.get("answer", "")),
             sources=list(payload.get("sources", []) or []),
             latency_ms=float(payload.get("latency_ms") or latency_ms),
-            cost_usd=payload.get("cost_usd"),
+            cost_usd=payload.get("cost_usd") if cost_known else None,
+            cost_known=cost_known,
             input_tokens=payload.get("input_tokens"),
             output_tokens=payload.get("output_tokens"),
             error=str(payload.get("error", "") or ""),
@@ -100,6 +104,12 @@ class LangGraphRagRunner:
 
         self._HumanMessage = HumanMessage
         self.memory = LongTermMemory()
+        try:
+            asyncio.run(
+                initialize_knowledge_memory(self.memory, require_documents=True)
+            )
+        except KnowledgeUnavailableError as exc:
+            raise RuntimeError(f"knowledge baseline unavailable: {exc}") from exc
         llm = ChatOpenAI(
             model=os.getenv("MODEL_NAME"),
             openai_api_key=os.getenv("OPENAI_API_KEY"),
@@ -168,12 +178,21 @@ def evaluate_runners(cases: list[dict], rag_runner, pi_runner) -> list[dict]:
 def _side_summary(results: list[dict], side: str) -> dict:
     rows = [item[side] for item in results]
     total = len(rows) or 1
+    known_costs = [
+        row["cost_usd"]
+        for row in rows
+        if row.get("cost_known") and row.get("cost_usd") is not None
+    ]
+    cost_known = bool(rows) and len(known_costs) == len(rows)
     return {
         "answer_accuracy": round(sum(1 for row in rows if row["answer_correct"]) / total, 4),
-        "citation_accuracy": round(sum(1 for row in rows if row["citation_correct"]) / total, 4),
-        "refusal_accuracy": round(sum(1 for row in rows if row["refusal_correct"]) / total, 4),
+        "citation_accuracy": round(sum(1 for row in rows if row.get("citation_correct")) / total, 4),
+        "citation_full_accuracy": round(sum(1 for row in rows if row.get("citation_full")) / total, 4),
+        "refusal_accuracy": round(sum(1 for row in rows if row.get("refusal_correct")) / total, 4),
         "median_latency_ms": round(median([row["latency_ms"] for row in rows]) if rows else 0.0, 2),
-        "cost_usd": round(sum((row.get("cost_usd") or 0.0) for row in rows), 6),
+        "cost_usd": round(sum(known_costs), 6) if cost_known else None,
+        "cost_known": cost_known,
+        "cost_unknown_cases": len(rows) - len(known_costs),
         "failures": sum(1 for row in rows if row.get("error")),
         "failure_rate": round(sum(1 for row in rows if row.get("error")) / total, 4),
     }
@@ -182,21 +201,24 @@ def _side_summary(results: list[dict], side: str) -> dict:
 def decide(pi: dict, rag: dict, comparison: dict, max_cost_usd: float = 0.05) -> dict:
     """Only recommend expanding Pi when it clearly wins without regressions."""
     better = (
-        comparison["citation_delta"] >= 0.05
+        comparison.get("citation_full_delta", 0.0) >= 0.05
         and pi["failure_rate"] <= rag["failure_rate"]
         and pi["median_latency_ms"] <= max(rag["median_latency_ms"] * 1.5, 1.0)
     )
-    affordable = pi["cost_usd"] <= max_cost_usd
+    cost_known = bool(pi.get("cost_known")) and pi.get("cost_usd") is not None
+    affordable = cost_known and pi["cost_usd"] <= max_cost_usd
     if better and affordable:
-        return {"expand_pi": True, "reason": "Pi 在引用质量上明显更好，且延迟/成本/失败率可接受"}
+        return {"expand_pi": True, "reason": "Pi 在完整来源匹配上明显更好，且延迟/成本/失败率可接受"}
     reasons = []
-    if comparison["citation_delta"] < 0.05:
-        reasons.append("引用准确率提升不足 5 个百分点")
+    if comparison.get("citation_full_delta", 0.0) < 0.05:
+        reasons.append("完整来源匹配提升不足 5 个百分点")
     if pi["failure_rate"] > rag["failure_rate"]:
         reasons.append("失败率高于基线")
     if pi["median_latency_ms"] > max(rag["median_latency_ms"] * 1.5, 1.0):
         reasons.append("中位延迟超过基线 1.5 倍")
-    if not affordable:
+    if not cost_known:
+        reasons.append("Pi 成本未知，不能据此扩大使用范围")
+    elif not affordable:
         reasons.append("单套件成本超预算")
     return {"expand_pi": False, "reason": "；".join(reasons) or "未达到扩展标准"}
 
@@ -204,11 +226,18 @@ def decide(pi: dict, rag: dict, comparison: dict, max_cost_usd: float = 0.05) ->
 def summarize(results: list[dict]) -> dict:
     rag = _side_summary(results, "rag")
     pi = _side_summary(results, "pi")
+    cost_delta = (
+        round(pi["cost_usd"] - rag["cost_usd"], 6)
+        if pi.get("cost_known") and rag.get("cost_known")
+        and pi.get("cost_usd") is not None and rag.get("cost_usd") is not None
+        else None
+    )
     comparison = {
         "answer_delta": round(pi["answer_accuracy"] - rag["answer_accuracy"], 4),
         "citation_delta": round(pi["citation_accuracy"] - rag["citation_accuracy"], 4),
+        "citation_full_delta": round(pi["citation_full_accuracy"] - rag["citation_full_accuracy"], 4),
         "latency_delta_ms": round(pi["median_latency_ms"] - rag["median_latency_ms"], 2),
-        "cost_delta_usd": round(pi["cost_usd"] - rag["cost_usd"], 6),
+        "cost_delta_usd": cost_delta,
         "failure_delta": round(pi["failure_rate"] - rag["failure_rate"], 4),
     }
     return {
@@ -226,6 +255,8 @@ def run_comparison(cases: list[dict], rag_runner, pi_runner) -> dict:
         **environment(),
         "suite": "pi_comparison",
         "sample_size": len(cases),
+        "dataset": dataset_info(EVALUATION_DIR / "rag_cases.jsonl"),
+        "corpus": corpus_info(PROJECT_ROOT / "knowledge_base"),
         "summary": summary,
         "results": results,
         "failures": [

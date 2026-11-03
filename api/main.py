@@ -48,7 +48,7 @@ from auth.security import (
 from auth.database import set_user_role, list_users, count_users_by_role
 from mcp_client.client import MCPClient
 from mcp_tools.order_server import server as mcp_server
-from memory.long_term import LongTermMemory
+from memory.long_term import EmbeddingUnavailable, LongTermMemory
 from memory.short_term import ShortTermMemory
 from memory.working_memory import WorkingMemory
 from knowledge.service import KnowledgeService
@@ -388,7 +388,16 @@ async def knowledge_search(
 ):
     """Stable knowledge API for the Pi experiment and other clients."""
     service = KnowledgeService(long_term_memory)
-    hits = await service.search(request.query, request.top_k, request.min_score)
+    try:
+        hits = await service.search(request.query, request.top_k, request.min_score)
+    except EmbeddingUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "knowledge_unavailable",
+                "message": "知识库暂时不可用，请稍后重试或转人工",
+            },
+        ) from exc
     return {"query": request.query, "hits": [hit.to_dict() for hit in hits]}
 
 

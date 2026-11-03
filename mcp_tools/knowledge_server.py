@@ -8,7 +8,11 @@ from mcp.server.mcpserver import MCPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from knowledge.service import KnowledgeService
+from knowledge.service import (
+    KnowledgeService,
+    KnowledgeUnavailableError,
+    initialize_knowledge_memory,
+)
 from memory.long_term import EmbeddingUnavailable, LongTermMemory
 
 server = MCPServer(
@@ -19,23 +23,28 @@ server = MCPServer(
 _service: KnowledgeService | None = None
 
 
-def _get_service() -> KnowledgeService:
+async def _get_service() -> KnowledgeService:
+    """Lazily build the index once before serving MCP requests."""
     global _service
     if _service is None:
-        _service = KnowledgeService(LongTermMemory())
+        memory = LongTermMemory()
+        await initialize_knowledge_memory(memory)
+        _service = KnowledgeService(memory)
     return _service
 
 
 async def _search(query: str, top_k: int = 5, min_score: float = 0.5) -> list[dict]:
     try:
-        hits = await _get_service().search(query, top_k, min_score)
-    except EmbeddingUnavailable as exc:
+        service = await _get_service()
+        hits = await service.search(query, top_k, min_score)
+    except (EmbeddingUnavailable, KnowledgeUnavailableError) as exc:
         return [{"error": "knowledge_unavailable", "message": str(exc)}]
     return [hit.to_dict() for hit in hits]
 
 
-def _status() -> dict:
-    return _get_service().status()
+async def _status() -> dict:
+    service = await _get_service()
+    return service.status()
 
 
 @server.tool(
@@ -55,7 +64,7 @@ async def knowledge_search(
     description="查看知识库当前状态（ready/empty/degraded）与文档数量",
 )
 async def knowledge_status() -> dict:
-    return await asyncio.to_thread(_status)
+    return await _status()
 
 
 if __name__ == "__main__":

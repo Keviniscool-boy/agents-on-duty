@@ -40,13 +40,22 @@ def score_case(
             for source in sources
             if str(source).startswith(expected_source)
         )
+        cited_full = any(
+            str(source) in answer
+            for source in sources
+            if str(source).startswith(expected_source)
+        )
         citation_correct = bool(cited) and not refusal
+        citation_full = bool(cited_full) and not refusal
     else:
         # 负样本：不应检索到任何来源，也不应编造引用。
         citation_correct = not sources
+        citation_full = not sources
     return {
         "recall_at_k": source_hit,
         "citation_correct": citation_correct,
+        # 更严格但仍非 NLI：doc_id + 版本 + 章节必须出现在答案中。
+        "citation_full": citation_full,
         "refusal_correct": refusal == (expected_action == "refuse"),
         "handoff_correct": handoff == (expected_action == "handoff"),
     }

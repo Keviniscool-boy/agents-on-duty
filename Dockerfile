@@ -16,11 +16,12 @@ COPY auth ./auth
 COPY mcp_client ./mcp_client
 COPY mcp_tools ./mcp_tools
 COPY memory ./memory
+COPY knowledge ./knowledge
 COPY storage ./storage
 COPY tools ./tools
 COPY tracing ./tracing
 COPY knowledge_base ./knowledge_base
-COPY vector_store ./vector_store
+RUN mkdir -p /app/vector_store
 COPY main.py pyproject.toml ./
 
 EXPOSE 8000

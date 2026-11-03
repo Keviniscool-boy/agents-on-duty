@@ -32,10 +32,14 @@ npm run build
 MODEL_NAME=gpt-4o-mini \
 OPENAI_API_KEY=... \
 OPENAI_BASE_URL=... \
+PI_INPUT_COST_PER_MTOK=... \
+PI_OUTPUT_COST_PER_MTOK=... \
 node dist/index.js --question "商品签收后多少天内可以申请退货？" --json
 ```
 
-输出 JSON：`answer`、`sources`、`hits`、`latency_ms`、`input_tokens`、`output_tokens`、`cost_usd`、`error`。
+输出 JSON：`answer`、`sources`、`hits`、`latency_ms`、`input_tokens`、`output_tokens`、`cost_usd`、`cost_known`、`error`。
+
+> 自定义 OpenAI-compatible 端点的价格不在模型目录里：请显式设置 `PI_INPUT_COST_PER_MTOK` / `PI_OUTPUT_COST_PER_MTOK`（每百万 token）。未设置时 `cost_known=false`、`cost_usd=null`，对比脚本不会把它当作 0 成本。
 
 ## MCP 变体
 
@@ -50,12 +54,12 @@ python evaluation/pi_comparison.py --limit 10
 
 - 基线：LangGraph `KnowledgeRAGAgent`（向量+关键词混合检索 + LLM 生成）。
 - 实验：Pi CLI（同一套 `rag_cases.jsonl`，同一 Python 知识服务）。
-- 指标：回答关键词命中、引用正确率、拒答准确率、中位延迟、模型成本、失败率。
-- 决策：只有引用正确率提升 ≥5 个百分点、失败率不升高、中位延迟不超过基线 1.5 倍、成本在预算内，才建议扩大 Pi。
-- 报告写入 `evaluation/results/pi-comparison-latest.json`。
+- 指标：回答关键词命中、来源匹配率（初步）、完整来源匹配率、拒答准确率、中位延迟、模型成本、失败率。
+- 决策：只有**完整来源匹配**提升 ≥5 个百分点、失败率不升高、中位延迟不超过基线 1.5 倍、且成本已知并在预算内，才建议扩大 Pi；成本未知时不自动扩大。
+- 报告写入 `evaluation/results/pi-comparison-latest.json`，包含数据集/语料指纹与样本量，供 `evaluation/compare.py` 严格比较。
 
 ## 限制
 
 - 政策与订单仍为模拟数据。
 - Pi 实验需要真实模型与 embedding 服务；本仓库的 pytest 只覆盖知识服务、MCP adapter、对比/决策逻辑与静态契约，不做真实模型 E2E。
-- 当前结论：**暂不扩大 Pi 使用范围**，保留独立实验目录；真实数据由 `evaluation/pi_comparison.py` 产生后再评估。
+- 当前为**保守决定**：暂不扩大 Pi 使用范围，保留独立实验目录；真实模型端到端对比尚未执行，`evaluation/pi_comparison.py` 产生数据后再评估。

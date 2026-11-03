@@ -21,7 +21,8 @@ export interface PiKnowledgeResult {
   latency_ms: number;
   input_tokens: number;
   output_tokens: number;
-  cost_usd: number;
+  cost_usd: number | null;
+  cost_known: boolean;
   error: string;
 }
 
@@ -37,6 +38,7 @@ export const SYSTEM_PROMPT = `你是企业客服知识库问答 Agent。
 function createProjectModel(): {
   models: ReturnType<typeof createModels>;
   model: Model<any>;
+  costKnown: boolean;
 } {
   const modelName =
     process.env.PI_MODEL_NAME ?? process.env.MODEL_NAME ?? "gpt-4o-mini";
@@ -47,6 +49,10 @@ function createProjectModel(): {
     // The project may use an arbitrary OpenAI-compatible model name, which is
     // not in Pi's built-in catalog; register it as a custom provider.
     const providerId = "project-openai";
+    // Without configured prices we must treat cost as unknown, not as zero.
+    const inputPrice = Number(process.env.PI_INPUT_COST_PER_MTOK ?? 0);
+    const outputPrice = Number(process.env.PI_OUTPUT_COST_PER_MTOK ?? 0);
+    const costKnown = inputPrice > 0 || outputPrice > 0;
     const model: Model<"openai-completions"> = {
       id: modelName,
       name: modelName,
@@ -55,7 +61,7 @@ function createProjectModel(): {
       baseUrl,
       reasoning: false,
       input: ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: { input: inputPrice, output: outputPrice, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 128000,
       maxTokens: 8192,
     };
@@ -69,7 +75,7 @@ function createProjectModel(): {
         api: openAICompletionsApi(),
       }),
     );
-    return { models, model };
+    return { models, model, costKnown };
   }
 
   models.setProvider(openaiProvider());
@@ -77,7 +83,7 @@ function createProjectModel(): {
   if (!model) {
     throw new Error(`model not found: ${modelName}`);
   }
-  return { models, model };
+  return { models, model, costKnown: true };
 }
 
 export async function runPiKnowledgeAgent(
@@ -88,7 +94,7 @@ export async function runPiKnowledgeAgent(
   const apiUrl = process.env.KNOWLEDGE_API_URL ?? "http://127.0.0.1:8000";
   const token = process.env.KNOWLEDGE_API_TOKEN ?? "";
 
-  const { models, model } = createProjectModel();
+  const { models, model, costKnown } = createProjectModel();
 
   const tool: AgentTool<any> = createKnowledgeSearchTool({
     apiUrl,
@@ -155,7 +161,8 @@ export async function runPiKnowledgeAgent(
     latency_ms: Date.now() - started,
     input_tokens: inputTokens,
     output_tokens: outputTokens,
-    cost_usd: costUsd,
+    cost_usd: costKnown ? costUsd : null,
+    cost_known: costKnown,
     error,
   };
 }

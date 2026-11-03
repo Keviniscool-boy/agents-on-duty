@@ -64,3 +64,53 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci_root_password
+          MYSQL_DATABASE: smart_cs
+        ports:
+          - "3306:3306"
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -pci_root_password"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t agents-on-duty:ci .
+      - name: Start container and check /health
+        run: |
+          docker run -d --name agents-on-duty-smoke --network host \
+            -e JWT_SECRET_KEY=ci-smoke-secret-key-at-least-32-bytes \
+            -e MYSQL_HOST=127.0.0.1 \
+            -e MYSQL_PORT=3306 \
+            -e MYSQL_USER=root \
+            -e MYSQL_PASSWORD=ci_root_password \
+            -e MYSQL_DATABASE=smart_cs \
+            -e OPENAI_API_KEY=dummy-ci-key \
+            -e OPENAI_BASE_URL=http://127.0.0.1:9/v1 \
+            -e MODEL_NAME=ci-model \
+            -e REDIS_URL=redis://127.0.0.1:6399/0 \
+            agents-on-duty:ci
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health; then
+              echo "health check passed"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "health check failed"
+          docker logs agents-on-duty-smoke
+          exit 1
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs agents-on-duty-smoke || true
+      - name: Stop container
+        if: always()
+        run: docker rm -f agents-on-duty-smoke || true

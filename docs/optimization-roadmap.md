@@ -94,14 +94,14 @@ RAG 不需要删除，但要从“几篇 Markdown + 向量检索”升级为可�
 
 Pi 只用于知识库问答子 Agent，作为可对比实验，不替换主业务流程。
 
-已实现：独立 `experiments/pi_knowledge_agent/`（Pi `@earendil-works/pi-agent-core@1.5.0` + `knowledge_search` 工具）、Python 稳定知识 API（`POST /api/knowledge/search`）与 MCP adapter（`mcp_tools/knowledge_server.py`）、与 LangGraph RAG 的对比脚本及扩展判定。评估结论：**暂不扩大 Pi 使用范围**；退款、审批、中断/恢复、权限、幂等和审计继续由 LangGraph + FastAPI 负责。真实模型对比需在部署环境运行 `evaluation/pi_comparison.py`。详见 [Pi 知识助手实验](pi-knowledge-agent.md)。
+实现完成，**待审核与合并**（PR #13）：独立 `experiments/pi_knowledge_agent/`（Pi `@earendil-works/pi-agent-core@1.5.0` + `knowledge_search` 工具）、Python 稳定知识 API（`POST /api/knowledge/search`）与 MCP adapter（`mcp_tools/knowledge_server.py`）、与 LangGraph RAG 的对比脚本及扩展判定。**对比框架已就绪，但真实模型端到端对比尚未执行**；当前“暂不扩大 Pi”是保守决定，不是量化实验结论。退款、审批、中断/恢复、权限、幂等和审计继续由 LangGraph + FastAPI 负责。详见 [Pi 知识助手实验](pi-knowledge-agent.md)。
 
-- [x] 新增独立的 Pi 知识助手实验目录。
-- [x] 让 Pi 负责选择检索工具、组合多个知识来源和生成带引用的答案。
-- [x] 通过稳定 API 或 MCP 调用 Python 知识库服务。
-- [x] 保留 LangGraph 负责退款、审批、中断、恢复、权限、幂等和审计。
-- [x] 对比 Pi 与现有实现的质量、引用正确率、延迟、成本和故障行为。
-- [x] 只有在结果更好且维护成本可接受时，才扩大 Pi 的使用范围（当前结论：暂不扩大）。
+- [ ] 新增独立的 Pi 知识助手实验目录。
+- [ ] 让 Pi 负责选择检索工具、组合多个知识来源和生成带引用的答案。
+- [ ] 通过稳定 API 或 MCP 调用 Python 知识库服务。
+- [ ] 保留 LangGraph 负责退款、审批、中断、恢复、权限、幂等和审计。
+- [ ] 对比 Pi 与现有实现的质量、引用正确率、延迟、成本和故障行为。
+- [ ] 只有在结果更好且维护成本可接受时，才扩大 Pi 的使用范围（当前为保守决定：暂不扩大，待真实对比）。
 
 **交付结果：**能解释为什么 Pi 适合知识 Agent，以及为什么业务工作流仍由 LangGraph 控制。
 

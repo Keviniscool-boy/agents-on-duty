@@ -3,7 +3,34 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
+
+
+DEFAULT_KB_DIR = Path(__file__).resolve().parents[1] / "knowledge_base"
+
+
+class KnowledgeUnavailableError(RuntimeError):
+    """Raised when the knowledge index cannot be built or has no documents."""
+
+
+async def initialize_knowledge_memory(
+    memory,
+    kb_dir: str | Path | None = None,
+    require_documents: bool = False,
+) -> int:
+    """Rebuild/refresh the persisted index before serving or comparing.
+
+    The HTTP startup path loads the knowledge base explicitly; MCP and the
+    evaluation baseline must do the same or they can silently use an empty or
+    stale index.
+    """
+    count = await memory.load_knowledge_base(str(kb_dir or DEFAULT_KB_DIR))
+    if getattr(memory, "index_build_failed", False):
+        raise KnowledgeUnavailableError("knowledge index build failed")
+    if require_documents and not getattr(memory, "documents", None):
+        raise KnowledgeUnavailableError("knowledge base is empty")
+    return count
 
 
 @dataclass(frozen=True)
