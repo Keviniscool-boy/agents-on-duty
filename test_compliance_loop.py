@@ -82,28 +82,45 @@ def _run_graph(llm: FakeLLM) -> dict:
     return asyncio.run(graph.ainvoke(initial_state, config=config))
 
 
-def test_compliance_passes_on_first_try():
-    """合规一次通过时直接合成，不触发重写。"""
+def test_fixed_fallback_skips_compliance_llm():
+    """固定兜底话术只做规则检查，不消耗合规模型。"""
     llm = FakeLLM([_compliance_reply(True)])
     result = _run_graph(llm)
 
     assert result["compliance_passed"] is True
     assert result["compliance_retries"] == 0
     assert "rewrite_attempts" not in result["sub_results"]
-    assert llm.calls == 1, "只有合规 LLM 检查调用了一次"
+    assert result["sub_results"]["compliance"]["llm_skipped"] is True
+    assert llm.calls == 0, "固定话术不应调用合规 LLM（问候/兜底零模型开销）"
 
 
-def test_compliance_loop_exhausts_retries_then_falls_back():
+def _rule_check_sequence(results):
+    """按次序回放规则检查结果，驱动合规重写循环（固定话术默认只走规则检查）。"""
+    from agents.compliance_checker import ComplianceResult
+
+    calls = {"n": 0}
+
+    async def scripted(self, content):
+        outcome = results[min(calls["n"], len(results) - 1)]
+        calls["n"] += 1
+        if outcome == "fail":
+            return ComplianceResult(
+                passed=False,
+                risk_level="medium",
+                violations=["fake violation"],
+                sanitized_content=content,
+            )
+        return ComplianceResult(passed=True, risk_level="low", sanitized_content=content)
+
+    return scripted
+
+
+def test_compliance_loop_exhausts_retries_then_falls_back(monkeypatch):
     """合规始终不通过：重写 MAX_COMPLIANCE_RETRIES 次后由合成节点降级。"""
-    llm = FakeLLM(
-        [
-            _compliance_reply(False),
-            "重写版本一",
-            _compliance_reply(False),
-            "重写版本二",
-            _compliance_reply(False),
-        ]
-    )
+    from agents.compliance_checker import ComplianceCheckerAgent
+
+    monkeypatch.setattr(ComplianceCheckerAgent, "rule_check", _rule_check_sequence(["fail"]))
+    llm = FakeLLM([_compliance_reply(False)])
     result = _run_graph(llm)
 
     assert result["compliance_retries"] == MAX_COMPLIANCE_RETRIES
@@ -112,15 +129,17 @@ def test_compliance_loop_exhausts_retries_then_falls_back():
     assert result["current_agent"] == "fallback"
     # 合规重试耗尽后保留 fallback 节点的安全答复。
     assert result["final_response"] == "我是客服助手，可以帮你查询订单、了解退款/售后政策，或申请售后。"
-    # 3 次合规 LLM 检查 + 2 次重写 = 5 次调用。
-    assert llm.calls == 2 * MAX_COMPLIANCE_RETRIES + 1
+    # 首轮固定话术只走规则检查（0 次）；之后 2 次重写 + 2 次 LLM 检查 = 4 次。
+    assert llm.calls == 2 * MAX_COMPLIANCE_RETRIES
 
 
-def test_compliance_passes_after_rewrite():
+def test_compliance_passes_after_rewrite(monkeypatch):
     """第一次不通过、重写后通过：第二次合规检查即放行。"""
+    from agents.compliance_checker import ComplianceCheckerAgent
+
+    monkeypatch.setattr(ComplianceCheckerAgent, "rule_check", _rule_check_sequence(["fail", "pass"]))
     llm = FakeLLM(
         [
-            _compliance_reply(False),
             "修正后的合规回答",
             _compliance_reply(True),
         ]

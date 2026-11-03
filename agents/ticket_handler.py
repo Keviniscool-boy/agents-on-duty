@@ -146,7 +146,7 @@ class TicketHandlerAgent:
                     "reused": bool((result or {}).get("reused")),
                 },
                 # 固定话术未经模型审查，标记后合规只做规则检查（见 compliance_checker）。
-                "fixed_reply": True,
+                "fixed_reply": final_response,
             },
         }
 
