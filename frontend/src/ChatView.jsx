@@ -229,6 +229,18 @@ export default function ChatView({ user, onLogout }) {
     // 失败重试不再重复追加用户气泡（失败时本轮消息已保留在界面上）。
     if (!isRetry) setMessages((old) => [...old, { role: "user", content: message }]);
     setStreamStatus("正在连接...");
+    // 连接/流式看门狗：后端无响应或流中断时主动中止，
+    // 避免界面永远停在"正在连接"而没有任何错误与重试入口。
+    // 连接超时 20s；流建立后每收到数据就重置 90s 静默计时（< 服务端 120s 兜底）。
+    const controller = new AbortController();
+    let responseReceived = false;
+    let lastActivity = Date.now();
+    const watchdog = setInterval(() => {
+      const budget = responseReceived ? 90000 : 20000;
+      if (Date.now() - lastActivity > budget) {
+        controller.abort();
+      }
+    }, 2000);
     try {
       // 优先走 SSE 流式端点，实时展示 Agent 处理阶段。
       const response = await fetch(`${API_URL}/api/chat/stream`, {
@@ -236,7 +248,10 @@ export default function ChatView({ user, onLogout }) {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, session_id: sessionId }),
+        signal: controller.signal,
       });
+      responseReceived = true;
+      lastActivity = Date.now();
       if (response.status === 401) {
         // B11：SSE 通道与 api() 保持一致的过期处理——广播登出。
         window.dispatchEvent(new Event("auth-expired"));
@@ -255,6 +270,7 @@ export default function ChatView({ user, onLogout }) {
       while (!finished) {
         const { done, value } = await reader.read();
         if (done) break;
+        lastActivity = Date.now();
         buffer += decoder.decode(value, { stream: true });
         const parts = buffer.split("\n\n");
         buffer = parts.pop();
@@ -288,9 +304,11 @@ export default function ChatView({ user, onLogout }) {
       await refreshSessions();
     } catch (err) {
       // 流式失败：保留本轮用户消息，明确报错并提供重试入口。
+      const timedOut = err?.name === "AbortError";
       setFailedMessage(message);
-      setError(err.message || "请求失败，请稍后重试");
+      setError(timedOut ? "连接超时或中断，请点击重试" : err.message || "请求失败，请稍后重试");
     } finally {
+      clearInterval(watchdog);
       setBusy(false);
       setStreamStatus("");
     }
