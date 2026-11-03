@@ -30,6 +30,11 @@ class SynthesizerAgent:
                 "final_response": state.get("sub_results", {}).get("fallback")
                 or "我还不能确定你需要什么。你是想查询订单、咨询政策，还是办理退款/售后？",
             }
+        # 固定业务话术（如确定性转人工的工单确认）原样透传：
+        # 不再让 LLM 重排，避免弄丢工单号/状态，也省一次模型调用。
+        # 与合规节点同款判定：仅当最终回复与产生它的固定话术完全一致时豁免。
+        if state.get("sub_results", {}).get("fixed_reply") == state.get("final_response", ""):
+            return {"final_response": state.get("final_response", "")}
 
         if not state.get("compliance_passed", False):
             return {

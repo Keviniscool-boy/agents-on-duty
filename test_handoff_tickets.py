@@ -222,3 +222,43 @@ def test_workbench_queue_lists_handoff_ticket(api):
     assert response.status_code == 200
     ticket_ids = [ticket["ticket_id"] for ticket in response.json()["tickets"]]
     assert created["ticket_id"] in ticket_ids
+
+
+def test_synthesizer_passes_through_fixed_reply():
+    """固定业务话术（转人工工单确认）不经 LLM 重排，工单号原样保留。"""
+    from agents.synthesizer import SynthesizerAgent
+
+    agent = SynthesizerAgent(_ForbiddenLLM())
+    fixed = "已为您创建人工服务工单。工单编号 TK-TEST1234，当前状态：待处理。"
+    result = asyncio.run(agent.process({
+        "messages": [HumanMessage(content="转人工")],
+        "current_agent": "ticket_handler",
+        "final_response": fixed,
+        "sub_results": {"fixed_reply": fixed},
+    }))
+    assert result["final_response"] == fixed
+
+
+def test_synthesizer_still_rewrites_business_answers():
+    """非固定话术的业务回答仍由合成节点整理（这里验证会调用模型）。"""
+    from agents.synthesizer import SynthesizerAgent
+
+    class CountingLLM:
+        def __init__(self):
+            self.calls = 0
+
+        async def ainvoke(self, messages, **kwargs):
+            self.calls += 1
+            return AIMessage(content="整理后的回答")
+
+    llm = CountingLLM()
+    agent = SynthesizerAgent(llm)
+    result = asyncio.run(agent.process({
+        "messages": [HumanMessage(content="查订单")],
+        "current_agent": "ticket_handler",
+        "final_response": "业务 Agent 的原始输出",
+        "compliance_passed": True,
+        "sub_results": {},
+    }))
+    assert llm.calls == 1
+    assert result["final_response"] == "整理后的回答"
