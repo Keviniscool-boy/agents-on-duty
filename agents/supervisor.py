@@ -83,6 +83,10 @@ class SupervisorNode:
         if any(term in text for term in fallback_terms):
             return "fallback"
 
+        # 明确要求人工服务：确定性转人工，不让模型自由决定是否建单。
+        if TicketHandlerAgent.is_handoff_request(message):
+            return "ticket_handler"
+
         # 订单号或明确的查询/工单动作应交给业务工具 Agent。
         has_order_id = re.search(r"(?:ord[-_]?\w+|订单号?\s*[A-Za-z0-9_-]+)", text)
         ticket_terms = ("创建工单", "提交工单", "订单状态", "查询物流", "物流查询", "申请退款", "我要退款", "帮我退款", "退货申请", "我的订单")

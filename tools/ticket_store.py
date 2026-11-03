@@ -95,6 +95,27 @@ def list_tickets(limit: int = 100, offset: int = 0, status: str = "") -> list[di
         connection.close()
 
 
+def list_user_tickets(user_id: str, limit: int = 20, offset: int = 0) -> dict:
+    """Return a user's own tickets, newest first (cross-user isolated)."""
+    connection = _connect()
+    try:
+        rows = connection.execute(
+            "SELECT result_json FROM ticket_idempotency"
+        ).fetchall()
+        tickets = []
+        for row in rows:
+            ticket = json.loads(row[0])
+            if ticket.get("user_id") == user_id:
+                tickets.append(ticket)
+        tickets.sort(key=lambda ticket: ticket.get("created_at", ""), reverse=True)
+        return {
+            "tickets": tickets[offset : offset + limit],
+            "total": len(tickets),
+        }
+    finally:
+        connection.close()
+
+
 def update_ticket_status(
     ticket_id: str,
     status: str,

@@ -77,7 +77,7 @@ from storage.after_sales import (
     release_session_turn,
     record_refund_decision,
 )
-from tools.ticket_store import list_tickets, update_ticket_status
+from tools.ticket_store import list_tickets, list_user_tickets, update_ticket_status
 from tracing.otel_config import get_metrics, init_tracer, trace_agent_call
 from tracing.admin_audit import trace_scope, list_events, list_runs
 from tracing.llm import TracedChatModel
@@ -375,6 +375,20 @@ async def call_tool(
         arguments=arguments,
     )
     return result.model_dump()
+
+
+@app.get("/api/tickets")
+def user_tickets(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: dict = Depends(get_current_user),
+):
+    """当前认证用户自己的工单列表（编号/状态/创建时间）。
+
+    只返回 user_id 与当前用户匹配的工单；客服/管理员查询自己的工单
+    同样只看到自己的（工作台队列走 /api/workbench/tickets）。
+    """
+    return list_user_tickets(current_user["id"], limit=limit, offset=offset)
 
 
 @app.get("/api/orders")

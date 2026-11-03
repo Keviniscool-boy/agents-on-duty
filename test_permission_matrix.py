@@ -152,3 +152,13 @@ def test_logout_with_both_cookie_and_bearer_revokes_both(isolated_auth):
         client.get("/api/auth/me", headers={"Authorization": f"Bearer {cookie_token}"}).status_code
         == 401
     ), "Cookie 令牌也应被吊销（不留可用残余）"
+
+
+def test_tickets_endpoint_requires_login_and_defaults_to_empty(isolated_auth):
+    """/api/tickets 未认证 401；登录后默认返回自己的（空）工单列表。"""
+    client = TestClient(isolated_auth.app)
+    assert client.get("/api/tickets").status_code == 401
+    token = _register(client, "tickets_user")
+    response = client.get("/api/tickets", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json() == {"tickets": [], "total": 0}

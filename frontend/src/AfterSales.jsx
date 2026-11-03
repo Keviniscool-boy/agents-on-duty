@@ -3,10 +3,12 @@ import { api } from "./api.js";
 
 const orderStatus = { delivered: "已签收", cancelled: "已取消", paid: "已支付", shipped: "已发货" };
 const refundStatus = { pending_review: "待人工审核", cancelled: "已撤回", approved: "已批准", rejected: "已拒绝", completed: "已完成" };
+const ticketStatus = { pending: "待处理", processing: "处理中", resolved: "已解决", cancelled: "已撤回", rejected: "已拒绝" };
 
 export default function AfterSales() {
   const [orders, setOrders] = useState([]);
   const [refunds, setRefunds] = useState([]);
+  const [tickets, setTickets] = useState([]);
   const [selected, setSelected] = useState("");
   const [reason, setReason] = useState("");
   const [applicationType, setApplicationType] = useState("");
@@ -19,9 +21,14 @@ export default function AfterSales() {
   const requestKey = useRef("");
 
   const refresh = useCallback(async () => {
-    const [orderData, refundData] = await Promise.all([api("/api/orders"), api("/api/refunds")]);
+    const [orderData, refundData, ticketData] = await Promise.all([
+      api("/api/orders"),
+      api("/api/refunds"),
+      api("/api/tickets"),
+    ]);
     setOrders(orderData.orders || []);
     setRefunds(refundData.refunds || []);
+    setTickets(ticketData.tickets || []);
   }, []);
 
   useEffect(() => {
@@ -120,6 +127,19 @@ export default function AfterSales() {
             {refund.status === "cancelled" && refund.resume_status && refund.resume_status !== "done" && <button type="button" className="text-button" disabled={busy} onClick={() => cancel(refund.id)}>重试会话恢复</button>}
           </article>)}
           {refunds.length === 0 && <p className="muted">暂无退款申请</p>}
+        </div>
+        <h3>我的工单</h3>
+        <div className="after-sales-list">
+          {tickets.map((ticket) => <article className="after-sales-row" key={ticket.ticket_id} data-status={ticket.status}>
+            <div>
+              <strong>{ticketStatus[ticket.status] || ticket.status}</strong>
+              <p>{ticket.ticket_id}</p>
+              <span>{ticket.title}</span>
+              <p className="muted">创建于 {new Date(ticket.created_at).toLocaleString("zh-CN")}</p>
+              {ticket.handled_by && <p>处理客服：{ticket.handled_by}</p>}
+            </div>
+          </article>)}
+          {tickets.length === 0 && <p className="muted">暂无工单；在对话中发送"转人工"即可创建。</p>}
         </div>
         {informationId && <form className="after-sales-form" onSubmit={submitInformation}>
           <label>补充信息<textarea required maxLength={1000} rows={3} value={information} onChange={(event) => setInformation(event.target.value)} /></label>
