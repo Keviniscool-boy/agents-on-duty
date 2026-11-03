@@ -54,8 +54,8 @@ python evaluation/pi_comparison.py --limit 10
 
 - 基线：LangGraph `KnowledgeRAGAgent`（向量+关键词混合检索 + LLM 生成）。
 - 实验：Pi CLI（同一套 `rag_cases.jsonl`，同一 Python 知识服务）。
-- 指标：回答关键词命中、来源匹配率（初步）、完整来源匹配率、拒答准确率、中位延迟、模型成本、失败率。
-- 决策：只有**完整来源匹配**提升 ≥5 个百分点、失败率不升高、中位延迟不超过基线 1.5 倍、且成本已知并在预算内，才建议扩大 Pi；成本未知时不自动扩大。
+- 指标：回答关键词命中、来源匹配率（初步）、完整来源字符串匹配率（非断言级验证）、拒答准确率、中位延迟、模型成本、失败率；失败样本不计入质量分母。
+- 决策：只有**完整来源字符串匹配**提升 ≥5 个百分点、失败率不升高、中位延迟不超过基线 1.5 倍、且成本已知并在预算内，才建议扩大 Pi；成本未知或有效样本不足时不会自动扩大。判定口径为 `citation_full_string_match_only`。
 - 报告写入 `evaluation/results/pi-comparison-latest.json`，包含数据集/语料指纹与样本量，供 `evaluation/compare.py` 严格比较。
 
 ## 限制

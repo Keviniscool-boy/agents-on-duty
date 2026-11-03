@@ -178,6 +178,10 @@ def evaluate_runners(cases: list[dict], rag_runner, pi_runner) -> list[dict]:
 def _side_summary(results: list[dict], side: str) -> dict:
     rows = [item[side] for item in results]
     total = len(rows) or 1
+    # Failed requests are reported separately and excluded from quality scores:
+    # an empty answer/sources would otherwise silently drag the denominator.
+    valid_rows = [row for row in rows if not row.get("error")]
+    valid_total = len(valid_rows) or 1
     known_costs = [
         row["cost_usd"]
         for row in rows
@@ -185,11 +189,12 @@ def _side_summary(results: list[dict], side: str) -> dict:
     ]
     cost_known = bool(rows) and len(known_costs) == len(rows)
     return {
-        "answer_accuracy": round(sum(1 for row in rows if row["answer_correct"]) / total, 4),
-        "citation_accuracy": round(sum(1 for row in rows if row.get("citation_correct")) / total, 4),
-        "citation_full_accuracy": round(sum(1 for row in rows if row.get("citation_full")) / total, 4),
-        "refusal_accuracy": round(sum(1 for row in rows if row.get("refusal_correct")) / total, 4),
-        "median_latency_ms": round(median([row["latency_ms"] for row in rows]) if rows else 0.0, 2),
+        "valid_cases": len(valid_rows),
+        "answer_accuracy": round(sum(1 for row in valid_rows if row["answer_correct"]) / valid_total, 4),
+        "citation_accuracy": round(sum(1 for row in valid_rows if row.get("citation_correct")) / valid_total, 4),
+        "citation_full_accuracy": round(sum(1 for row in valid_rows if row.get("citation_full")) / valid_total, 4),
+        "refusal_accuracy": round(sum(1 for row in valid_rows if row.get("refusal_correct")) / valid_total, 4),
+        "median_latency_ms": round(median([row["latency_ms"] for row in valid_rows]) if valid_rows else 0.0, 2),
         "cost_usd": round(sum(known_costs), 6) if cost_known else None,
         "cost_known": cost_known,
         "cost_unknown_cases": len(rows) - len(known_costs),
@@ -198,8 +203,17 @@ def _side_summary(results: list[dict], side: str) -> dict:
     }
 
 
+DECISION_BASIS = "citation_full_string_match_only"
+
+
 def decide(pi: dict, rag: dict, comparison: dict, max_cost_usd: float = 0.05) -> dict:
     """Only recommend expanding Pi when it clearly wins without regressions."""
+    if not pi.get("valid_cases") or not rag.get("valid_cases"):
+        return {
+            "expand_pi": False,
+            "reason": "有效评测样本不足，不能扩大使用范围",
+            "decision_basis": DECISION_BASIS,
+        }
     better = (
         comparison.get("citation_full_delta", 0.0) >= 0.05
         and pi["failure_rate"] <= rag["failure_rate"]
@@ -208,10 +222,14 @@ def decide(pi: dict, rag: dict, comparison: dict, max_cost_usd: float = 0.05) ->
     cost_known = bool(pi.get("cost_known")) and pi.get("cost_usd") is not None
     affordable = cost_known and pi["cost_usd"] <= max_cost_usd
     if better and affordable:
-        return {"expand_pi": True, "reason": "Pi 在完整来源匹配上明显更好，且延迟/成本/失败率可接受"}
+        return {
+            "expand_pi": True,
+            "reason": "Pi 在完整来源字符串匹配上明显更好，且延迟/成本/失败率可接受",
+            "decision_basis": DECISION_BASIS,
+        }
     reasons = []
     if comparison.get("citation_full_delta", 0.0) < 0.05:
-        reasons.append("完整来源匹配提升不足 5 个百分点")
+        reasons.append("完整来源字符串匹配提升不足 5 个百分点")
     if pi["failure_rate"] > rag["failure_rate"]:
         reasons.append("失败率高于基线")
     if pi["median_latency_ms"] > max(rag["median_latency_ms"] * 1.5, 1.0):
@@ -220,7 +238,11 @@ def decide(pi: dict, rag: dict, comparison: dict, max_cost_usd: float = 0.05) ->
         reasons.append("Pi 成本未知，不能据此扩大使用范围")
     elif not affordable:
         reasons.append("单套件成本超预算")
-    return {"expand_pi": False, "reason": "；".join(reasons) or "未达到扩展标准"}
+    return {
+        "expand_pi": False,
+        "reason": "；".join(reasons) or "未达到扩展标准",
+        "decision_basis": DECISION_BASIS,
+    }
 
 
 def summarize(results: list[dict]) -> dict:
@@ -255,7 +277,7 @@ def run_comparison(cases: list[dict], rag_runner, pi_runner) -> dict:
         **environment(),
         "suite": "pi_comparison",
         "sample_size": len(cases),
-        "dataset": dataset_info(EVALUATION_DIR / "rag_cases.jsonl"),
+        "dataset": dataset_info(EVALUATION_DIR / "rag_cases.jsonl", cases=cases),
         "corpus": corpus_info(PROJECT_ROOT / "knowledge_base"),
         "summary": summary,
         "results": results,

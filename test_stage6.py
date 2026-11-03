@@ -185,11 +185,14 @@ def test_pi_comparison_with_fake_runners():
     pi = FakeRunner(answer="七天 [POL-X v1.0 §A]", sources=["POL-X v1.0 §A"], latency_ms=120.0, cost_usd=0.01)
     results = evaluate_runners(cases, rag, pi)
     summary = summarize(results)
+    assert summary["rag"]["valid_cases"] == 1
+    assert summary["pi"]["valid_cases"] == 1
     assert summary["rag"]["citation_full_accuracy"] == 1.0
     assert summary["pi"]["citation_full_accuracy"] == 1.0
     assert summary["comparison"]["citation_full_delta"] == 0.0
     # No clear win -> keep LangGraph.
     assert summary["decision"]["expand_pi"] is False
+    assert summary["decision"]["decision_basis"] == "citation_full_string_match_only"
 
     better_pi = FakeRunner(answer="七天 [POL-X v1.0 §A]", sources=["POL-X v1.0 §A"], latency_ms=100.0, cost_usd=0.01)
     worse_rag = FakeRunner(answer="不知道", sources=[], latency_ms=150.0)
@@ -209,6 +212,60 @@ def test_pi_comparison_with_fake_runners():
     assert unknown["pi"]["cost_usd"] is None
     assert unknown["decision"]["expand_pi"] is False
     assert "成本未知" in unknown["decision"]["reason"]
+
+
+class ScriptedRunner:
+    def __init__(self, results):
+        self.results = list(results)
+
+    def run(self, question):
+        return self.results.pop(0)
+
+
+def test_comparison_excludes_failures_from_quality():
+    cases = [
+        {
+            "id": "c1",
+            "question": "q1",
+            "expected_source": "POL-X",
+            "expected_keywords": ["七天"],
+            "expected_action": "answer",
+        },
+        {
+            "id": "c2",
+            "question": "q2",
+            "expected_source": "POL-X",
+            "expected_keywords": ["七天"],
+            "expected_action": "answer",
+        },
+    ]
+    correct = RunnerResult(
+        answer="七天 [POL-X v1.0 §A]",
+        sources=["POL-X v1.0 §A"],
+        latency_ms=100.0,
+        cost_usd=0.01,
+        cost_known=True,
+    )
+    failure = RunnerResult(latency_ms=10.0, error="boom", cost_known=False)
+
+    rag = ScriptedRunner([correct, failure])
+    pi = ScriptedRunner([correct, correct])
+    summary = summarize(evaluate_runners(cases, rag, pi))
+    assert summary["rag"]["valid_cases"] == 1
+    assert summary["rag"]["citation_full_accuracy"] == 1.0
+    assert summary["rag"]["failure_rate"] == 0.5
+    assert summary["pi"]["valid_cases"] == 2
+    assert summary["pi"]["citation_full_accuracy"] == 1.0
+    assert summary["decision"]["expand_pi"] is False
+
+    # Pi failing a case must not be hidden by excluding it from quality.
+    rag_ok = ScriptedRunner([correct, correct])
+    pi_failing = ScriptedRunner([correct, failure])
+    summary = summarize(evaluate_runners(cases, rag_ok, pi_failing))
+    assert summary["pi"]["valid_cases"] == 1
+    assert summary["pi"]["failure_rate"] == 0.5
+    assert summary["decision"]["expand_pi"] is False
+    assert "失败率" in summary["decision"]["reason"]
 
 
 def test_subprocess_pi_runner_parses_json():

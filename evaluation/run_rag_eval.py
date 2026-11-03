@@ -120,7 +120,7 @@ async def main() -> None:
     )
     print(f"\n召回率@k: {summary['recall_at_k_percent']}%")
     print(f"来源匹配率（初步）: {summary['citation_correct_rate_percent']}%")
-    print(f"完整来源匹配率: {summary['citation_full_rate_percent']}%")
+    print(f"完整来源字符串匹配率（非断言级验证）: {summary['citation_full_rate_percent']}%")
     print(f"拒答准确率: {summary['refusal_accuracy_percent']}%")
     print(f"转人工准确率: {summary['handoff_accuracy_percent']}%")
     print(f"回答关键词命中率: {summary['answer_accuracy_percent']}%")
