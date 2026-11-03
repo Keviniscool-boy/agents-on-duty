@@ -853,15 +853,18 @@ async def _finalize_chat(
     sub_results = result.get("sub_results", {}) or {}
     knowledge_decision = sub_results.get("knowledge_decision", "")
     handoff_required = bool(sub_results.get("handoff_required", False))
-    # 只透传 order_query 的可信结构化结果；失败结果与猜测文本一律不下发。
-    order_cards = [
-        entry.get("result")
-        for entry in sub_results.get("ticket_handler_tool_results", [])
-        if entry.get("tool") == "order_query"
-        and isinstance(entry.get("result"), dict)
-        and entry["result"].get("order_id")
-        and not entry["result"].get("error")
-    ]
+    # 只透传订单工具的可信结构化结果；失败结果与猜测文本一律不下发。
+    order_cards: list[dict] = []
+    for entry in sub_results.get("ticket_handler_tool_results", []):
+        payload = entry.get("result")
+        if not isinstance(payload, dict):
+            continue
+        if entry.get("tool") == "order_query" and payload.get("order_id") and not payload.get("error"):
+            order_cards.append(payload)
+        elif entry.get("tool") == "order_list":
+            for order in payload.get("orders", []):
+                if isinstance(order, dict) and order.get("order_id") and not order.get("error"):
+                    order_cards.append(order)
     response = result["final_response"]
     if interrupted:
         # 图暂停在 human_review：本轮给用户的是等待提示，

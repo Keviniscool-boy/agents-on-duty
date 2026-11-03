@@ -262,3 +262,44 @@ def test_synthesizer_still_rewrites_business_answers():
     }))
     assert llm.calls == 1
     assert result["final_response"] == "整理后的回答"
+
+
+def test_finalize_chat_extracts_order_cards(monkeypatch):
+    """order_list/order_query 的可信结构化结果转成卡片；失败结果与退款单不进入卡片。"""
+    import api.main as api_main
+
+    class FakeMemory:
+        def update(self, *args, **kwargs):
+            pass
+
+    class FakeHistory:
+        async def add_message(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(api_main, "working_memory", FakeMemory())
+    monkeypatch.setattr(api_main, "short_term_memory", FakeHistory())
+
+    result = {
+        "final_response": "查询到你的订单",
+        "intent": "ticket_handler",
+        "current_agent": "ticket_handler",
+        "compliance_passed": True,
+        "compliance_reason": "",
+        "sub_results": {
+            "ticket_handler_tool_results": [
+                {
+                    "tool": "order_list",
+                    "result": {
+                        "orders": [
+                            {"order_id": "O1", "status": "delivered", "amount_cents": 29900},
+                            {"order_id": "O2", "error": "order_not_found"},
+                        ]
+                    },
+                },
+                {"tool": "order_query", "result": {"order_id": "O3", "status": "paid"}},
+                {"tool": "refund_apply", "result": {"id": "RF-1", "status": "pending_review"}},
+            ],
+        },
+    }
+    response = asyncio.run(api_main._finalize_chat("s-1", "user-a", "查询我的订单", result))
+    assert [card["order_id"] for card in response.order_cards] == ["O1", "O3"]
