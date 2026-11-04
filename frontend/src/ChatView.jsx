@@ -126,6 +126,8 @@ function OpsPanel() {
         {tab === "metrics" &&
           (metrics === null ? (
             <p className="loading-state">正在加载指标...</p>
+          ) : Object.keys(metrics).length === 0 ? (
+            <p className="loading-state">暂无指标；服务重启后计数从零开始。</p>
           ) : (
             Object.entries(metrics).map(([agent, summary]) =>
               typeof summary === "object" && summary !== null ? (
@@ -384,18 +386,21 @@ export default function ChatView({ user, onLogout }) {
           >
             订单售后
           </button>
-          <button
-            className={`text-button inverse ${showNav ? "active" : ""}`}
-            onClick={() => {
-              setShowAdmin(false);
-              setShowWorkbench(false);
-              setShowAfterSales(false);
-              setShowOps(false);
-              setShowNav((v) => !v);
-            }}
-          >
-            会话
-          </button>
+          {/* 个人会话侧栏只属于普通用户；客服/管理员面对客户的是工作台队列。 */}
+          {!isAgent && (
+            <button
+              className={`text-button inverse ${showNav ? "active" : ""}`}
+              onClick={() => {
+                setShowAdmin(false);
+                setShowWorkbench(false);
+                setShowAfterSales(false);
+                setShowOps(false);
+                setShowNav((v) => !v);
+              }}
+            >
+              会话
+            </button>
+          )}
           {isAgent && (
             <button className="text-button inverse" onClick={() => setShowOps((v) => !v)}>
               {showOps ? "隐藏面板" : "运维面板"}
@@ -415,8 +420,8 @@ export default function ChatView({ user, onLogout }) {
         </div>
       </header>
       <section className={`workspace ${showNav ? "open-nav" : ""}`}>
-        {/* 管理/客服工作视图占满整行，不渲染聊天会话侧栏。 */}
-        {!showAdmin && !showWorkbench && (
+        {/* 管理/客服工作视图占满整行；客服/管理员也不显示个人会话侧栏。 */}
+        {!showAdmin && !showWorkbench && !isAgent && (
         <aside className="sidebar">
           <div className="side-heading">
             <span>我的会话</span>
@@ -458,7 +463,6 @@ export default function ChatView({ user, onLogout }) {
         {showAdmin && user.role === "admin" ? <AdminPanel /> : showWorkbench && isAgent ? <WorkbenchPanel /> : showAfterSales ? <AfterSales /> : <section className="chat-panel">
           <div className="chat-heading">
             <div>
-              <p className="eyebrow">SUPERVISOR AGENT</p>
               <h2>智能客服</h2>
               <p className="chat-subtitle">{currentTitle}</p>
             </div>
@@ -467,7 +471,6 @@ export default function ChatView({ user, onLogout }) {
             {loadingHistory && <div className="loading-state">正在加载会话...</div>}
             {!loadingHistory && messages.length === 0 && (
               <div className="empty-state">
-                <div className="empty-icon">✦</div>
                 <h3>有什么可以帮你？</h3>
                 <p>可以咨询产品政策、查询订单或提交工单。</p>
                 <div className="suggestions">

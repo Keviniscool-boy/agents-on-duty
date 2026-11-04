@@ -28,9 +28,7 @@ export default function AuthView({ onLogin }) {
   return (
     <main className="auth-shell">
       <section className="auth-panel">
-        <div className="brand-mark">SC</div>
-        <p className="eyebrow">SMART CUSTOMER SERVICE</p>
-        <h1>{registerMode ? "创建账户" : "欢迎回来"}</h1>
+        <h1>{registerMode ? "创建账户" : "登录 Smart CS"}</h1>
         <p className="muted">登录后开始使用智能客服 Agent</p>
         <form onSubmit={submit}>
           <label>
