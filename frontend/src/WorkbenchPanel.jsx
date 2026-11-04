@@ -16,11 +16,19 @@ const ticketStatusLabel = {
   resolved: "已解决",
 };
 
+function fmtTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
 export default function WorkbenchPanel() {
   const [refunds, setRefunds] = useState([]);
   const [tickets, setTickets] = useState([]);
   const [detail, setDetail] = useState(null);
   const [selectedTicket, setSelectedTicket] = useState(null);
+  const [ticketMessages, setTicketMessages] = useState([]);
+  const [ticketReply, setTicketReply] = useState("");
   const [queue, setQueue] = useState("refunds");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -97,6 +105,46 @@ export default function WorkbenchPanel() {
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
 
+  async function openTicket(ticket) {
+    setSelectedTicket(ticket);
+    setTicketReply("");
+    setError("");
+    try {
+      const data = await api(`/api/workbench/tickets/${encodeURIComponent(ticket.ticket_id)}/messages`);
+      setTicketMessages(data.messages || []);
+    } catch (err) {
+      setTicketMessages([]);
+      setError(err.message);
+    }
+  }
+
+  async function refreshTicketMessages() {
+    if (!selectedTicket) return;
+    try {
+      const data = await api(`/api/workbench/tickets/${encodeURIComponent(selectedTicket.ticket_id)}/messages`);
+      setTicketMessages(data.messages || []);
+    } catch { /* 保持现有内容 */ }
+  }
+
+  async function replyTicket() {
+    if (busy || !selectedTicket || !ticketReply.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/workbench/tickets/${encodeURIComponent(selectedTicket.ticket_id)}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ content: ticketReply.trim() }),
+      });
+      setTicketReply("");
+      await refreshTicketMessages();
+      setNotice("已回复客户；客户可在「我的工单」中查看。");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function updateTicketStatus(status) {
     if (busy || !selectedTicket) return;
     setBusy(true);
@@ -135,7 +183,7 @@ export default function WorkbenchPanel() {
             <button className="text-button" onClick={() => openDetail(refund.id)}>
               <strong>{refundStatus[refund.status] || refund.status}</strong>
               <p>{refund.id}</p>
-              <span>{refund.username || refund.user_id} · 订单 {refund.order_id} · {refund.reason}</span>
+              <span>{refund.username || refund.user_id} · {fmtTime(refund.created_at)} · 订单 {refund.order_id} · {refund.reason}</span>
             </button>
           </article>
         ))}
@@ -230,10 +278,10 @@ export default function WorkbenchPanel() {
         <div className="after-sales-list">
           {tickets.map((ticket) => (
             <article className={`after-sales-row ${selectedTicket?.ticket_id === ticket.ticket_id ? "active" : ""}`} key={ticket.ticket_id}>
-              <button className="text-button" onClick={() => setSelectedTicket(ticket)}>
+              <button className="text-button" onClick={() => openTicket(ticket)}>
                 <strong>{ticketStatusLabel[ticket.status] || ticket.status} · {ticket.ticket_id}</strong>
                 <p>{ticket.title}</p>
-                <span>{ticket.username || ticket.user_id || "旧工单"} · {ticket.category} · {ticket.priority}</span>
+                <span>{ticket.username || ticket.user_id || "旧工单"} · {fmtTime(ticket.created_at)} · {ticket.category}</span>
               </button>
             </article>
           ))}
@@ -252,6 +300,24 @@ export default function WorkbenchPanel() {
             <p>用户描述：{selectedTicket.description}</p>
             {selectedTicket.handled_by && <p>处理人：{selectedTicket.handled_by}</p>}
           </section>
+
+          <h3>工单对话</h3>
+          <section className="panel-card ticket-thread">
+            {ticketMessages.length === 0 && <p className="muted">暂无对话。回复后客户可在「我的工单」中看到。</p>}
+            {ticketMessages.map((message) => (
+              <div key={message.id} className={`ticket-msg ${message.sender_role}`}>
+                <span className="ticket-msg-meta">{message.sender_role === "agent" ? `客服 ${message.sender_name || ""}` : `客户 ${message.sender_name || ""}`} · {fmtTime(message.created_at)}</span>
+                <p>{message.content}</p>
+              </div>
+            ))}
+          </section>
+          <form className="after-sales-form" onSubmit={(event) => { event.preventDefault(); replyTicket(); }}>
+            <label>回复客户<textarea rows={2} maxLength={2000} value={ticketReply} onChange={(event) => setTicketReply(event.target.value)} placeholder="回复将显示在客户的「我的工单」里" /></label>
+            <div className="after-sales-actions">
+              <button type="submit" className="primary" disabled={busy || !ticketReply.trim()}>发送回复</button>
+            </div>
+          </form>
+
           {selectedTicket.status !== "resolved" && <div className="after-sales-actions">
             {selectedTicket.status !== "processing" && <button className="text-button" disabled={busy} onClick={() => updateTicketStatus("processing")}>开始处理</button>}
             <button className="primary" disabled={busy} onClick={() => updateTicketStatus("resolved")}>标记已解决</button>

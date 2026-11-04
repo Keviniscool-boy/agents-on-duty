@@ -77,7 +77,14 @@ from storage.after_sales import (
     release_session_turn,
     record_refund_decision,
 )
-from tools.ticket_store import list_tickets, list_user_tickets, update_ticket_status
+from tools.ticket_store import (
+    add_ticket_message,
+    get_ticket,
+    list_ticket_messages,
+    list_tickets,
+    list_user_tickets,
+    update_ticket_status,
+)
 from tracing.otel_config import get_metrics, init_tracer, trace_agent_call
 from tracing.admin_audit import trace_scope, list_events, list_runs
 from tracing.llm import TracedChatModel
@@ -242,6 +249,10 @@ class TicketStatusRequest(BaseModel):
     status: str
 
 
+class TicketMessageRequest(BaseModel):
+    content: str
+
+
 class RefundInformationRequest(BaseModel):
     content: str
 
@@ -394,6 +405,80 @@ def user_tickets(
     同样只看到自己的（工作台队列走 /api/workbench/tickets）。
     """
     return list_user_tickets(current_user["id"], limit=limit, offset=offset)
+
+
+def _load_ticket_or_404(ticket_id: str) -> dict:
+    ticket = get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="工单不存在")
+    return ticket
+
+
+@app.get("/api/tickets/{ticket_id}")
+def user_ticket_detail(
+    ticket_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """工单详情 + 对话记录；仅工单归属人可读。"""
+    ticket = _load_ticket_or_404(ticket_id)
+    if ticket.get("user_id") != current_user["id"]:
+        raise HTTPException(status_code=403, detail="只能查看自己的工单")
+    return {
+        "ticket": ticket,
+        "messages": list_ticket_messages(ticket_id),
+    }
+
+
+@app.post("/api/tickets/{ticket_id}/messages")
+def user_ticket_reply(
+    ticket_id: str,
+    request: TicketMessageRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """用户在自己的工单上追问/补充。"""
+    ticket = _load_ticket_or_404(ticket_id)
+    if ticket.get("user_id") != current_user["id"]:
+        raise HTTPException(status_code=403, detail="只能回复自己的工单")
+    try:
+        message = add_ticket_message(
+            ticket_id,
+            "user",
+            request.content,
+            current_user.get("username", ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"message": message}
+
+
+@app.get("/api/workbench/tickets/{ticket_id}/messages")
+def workbench_ticket_messages(
+    ticket_id: str,
+    operator: dict = Depends(require_role("agent", "admin")),
+):
+    """客服读取任意工单对话。"""
+    _load_ticket_or_404(ticket_id)
+    return {"messages": list_ticket_messages(ticket_id)}
+
+
+@app.post("/api/workbench/tickets/{ticket_id}/messages")
+def workbench_ticket_reply(
+    ticket_id: str,
+    request: TicketMessageRequest,
+    operator: dict = Depends(require_role("agent", "admin")),
+):
+    """客服在工单上回复用户；用户在"我的工单"里可见。"""
+    _load_ticket_or_404(ticket_id)
+    try:
+        message = add_ticket_message(
+            ticket_id,
+            "agent",
+            request.content,
+            operator.get("username", ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"message": message}
 
 
 @app.get("/api/orders")

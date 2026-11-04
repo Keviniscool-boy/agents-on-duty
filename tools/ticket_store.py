@@ -23,6 +23,21 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ticket_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticket_id TEXT NOT NULL,
+            sender_role TEXT NOT NULL CHECK(sender_role IN ('user', 'agent')),
+            sender_name TEXT NOT NULL DEFAULT '',
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket ON ticket_messages(ticket_id, id)"
+    )
     return connection
 
 
@@ -150,5 +165,92 @@ def update_ticket_status(
     except Exception:
         connection.rollback()
         raise
+    finally:
+        connection.close()
+
+
+def get_ticket(ticket_id: str) -> dict | None:
+    """按工单号取单条工单记录；不存在返回 None。"""
+    connection = _connect()
+    try:
+        rows = connection.execute(
+            "SELECT result_json FROM ticket_idempotency"
+        ).fetchall()
+    finally:
+        connection.close()
+    for row in rows:
+        ticket = json.loads(row[0])
+        if ticket.get("ticket_id") == ticket_id:
+            return ticket
+    return None
+
+
+def add_ticket_message(
+    ticket_id: str,
+    sender_role: str,
+    content: str,
+    sender_name: str = "",
+) -> dict | None:
+    """向工单追加一条对话消息；工单不存在时返回 None。"""
+    content = (content or "").strip()
+    if not content or len(content) > 2000:
+        raise ValueError("消息内容须为 1-2000 字")
+    if sender_role not in {"user", "agent"}:
+        raise ValueError("sender_role 只能是 user 或 agent")
+    connection = _connect()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        rows = connection.execute(
+            "SELECT result_json FROM ticket_idempotency"
+        ).fetchall()
+        found = False
+        for row in rows:
+            ticket = json.loads(row[0])
+            if ticket.get("ticket_id") == ticket_id:
+                found = True
+                break
+        if not found:
+            connection.rollback()
+            return None
+        created_at = datetime.now(timezone.utc).isoformat()
+        cursor = connection.execute(
+            "INSERT INTO ticket_messages (ticket_id, sender_role, sender_name, content, created_at) VALUES (?, ?, ?, ?, ?)",
+            (ticket_id, sender_role, sender_name, content, created_at),
+        )
+        connection.commit()
+        return {
+            "id": cursor.lastrowid,
+            "ticket_id": ticket_id,
+            "sender_role": sender_role,
+            "sender_name": sender_name,
+            "content": content,
+            "created_at": created_at,
+        }
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def list_ticket_messages(ticket_id: str, limit: int = 100) -> list[dict]:
+    """按时间正序返回工单对话（默认最近 100 条）。"""
+    connection = _connect()
+    try:
+        rows = connection.execute(
+            "SELECT id, sender_role, sender_name, content, created_at FROM ticket_messages WHERE ticket_id = ? ORDER BY id DESC LIMIT ?",
+            (ticket_id, limit),
+        ).fetchall()
+        return [
+            {
+                "id": row[0],
+                "ticket_id": ticket_id,
+                "sender_role": row[1],
+                "sender_name": row[2],
+                "content": row[3],
+                "created_at": row[4],
+            }
+            for row in reversed(rows)
+        ]
     finally:
         connection.close()

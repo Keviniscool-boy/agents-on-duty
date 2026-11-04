@@ -18,6 +18,9 @@ export default function AfterSales() {
   const [notice, setNotice] = useState("");
   const [informationId, setInformationId] = useState("");
   const [information, setInformation] = useState("");
+  const [openTicketId, setOpenTicketId] = useState("");
+  const [ticketThread, setTicketThread] = useState({ ticket: null, messages: [] });
+  const [ticketReply, setTicketReply] = useState("");
   const requestKey = useRef("");
 
   const refresh = useCallback(async () => {
@@ -97,6 +100,44 @@ export default function AfterSales() {
     }
   }
 
+  async function toggleTicketThread(ticketId) {
+    if (openTicketId === ticketId) {
+      setOpenTicketId("");
+      return;
+    }
+    setError("");
+    setOpenTicketId(ticketId);
+    setTicketReply("");
+    try {
+      const data = await api(`/api/tickets/${encodeURIComponent(ticketId)}`);
+      setTicketThread({ ticket: data.ticket || null, messages: data.messages || [] });
+    } catch (err) {
+      setTicketThread({ ticket: null, messages: [] });
+      setError(err.message);
+    }
+  }
+
+  async function replyTicket(event) {
+    event.preventDefault();
+    if (busy || !openTicketId || !ticketReply.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/tickets/${encodeURIComponent(openTicketId)}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ content: ticketReply.trim() }),
+      });
+      setTicketReply("");
+      const data = await api(`/api/tickets/${encodeURIComponent(openTicketId)}`);
+      setTicketThread({ ticket: data.ticket || null, messages: data.messages || [] });
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="after-sales" aria-label="订单与售后">
       <header><h2>订单与售后</h2><p className="muted">演示订单，不涉及真实交易。</p></header>
@@ -139,7 +180,28 @@ export default function AfterSales() {
               <span>{ticket.title}</span>
               <p className="muted">创建于 {new Date(ticket.created_at).toLocaleString("zh-CN")}</p>
               {ticket.handled_by && <p>处理客服：{ticket.handled_by}</p>}
+              <button type="button" className="text-button" onClick={() => toggleTicketThread(ticket.ticket_id)}>
+                {openTicketId === ticket.ticket_id ? "收起对话" : "查看对话 / 追问"}
+              </button>
             </div>
+            {openTicketId === ticket.ticket_id && <div className="ticket-thread-user">
+              <div className="ticket-thread">
+                {ticketThread.messages.length === 0 && <p className="muted">暂无对话；客服回复后会显示在这里。</p>}
+                {ticketThread.messages.map((message) => (
+                  <div key={message.id} className={`ticket-msg ${message.sender_role}`}>
+                    <span className="ticket-msg-meta">{message.sender_role === "agent" ? `客服 ${message.sender_name || ""}` : "我"} · {new Date(message.created_at).toLocaleString("zh-CN")}</span>
+                    <p>{message.content}</p>
+                  </div>
+                ))}
+              </div>
+              <form className="after-sales-form" onSubmit={replyTicket}>
+                <label>追问 / 补充说明<textarea required rows={2} maxLength={2000} value={ticketReply} onChange={(event) => setTicketReply(event.target.value)} /></label>
+                <div className="after-sales-actions">
+                  <button type="submit" className="primary" disabled={busy || !ticketReply.trim()}>发送</button>
+                  <button type="button" className="text-button" disabled={busy} onClick={() => setOpenTicketId("")}>收起</button>
+                </div>
+              </form>
+            </div>}
           </article>)}
           {tickets.length === 0 && <p className="muted">暂无工单；在对话中发送"转人工"即可创建。</p>}
         </div>
