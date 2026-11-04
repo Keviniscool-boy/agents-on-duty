@@ -23,6 +23,8 @@ class AgentState(TypedDict):
 
     messages: Annotated[list[BaseMessage], add_messages]
     user_id:str
+    # 认证用户的显示名：写进工单/审计，客服能直接认出客户。
+    username: str
     session_id: str
     final_response: str
     intent: str
@@ -82,6 +84,10 @@ class SupervisorNode:
         )
         if any(term in text for term in fallback_terms):
             return "fallback"
+
+        # 明确要求人工服务：确定性转人工，不让模型自由决定是否建单。
+        if TicketHandlerAgent.is_handoff_request(message):
+            return "ticket_handler"
 
         # 订单号或明确的查询/工单动作应交给业务工具 Agent。
         has_order_id = re.search(r"(?:ord[-_]?\w+|订单号?\s*[A-Za-z0-9_-]+)", text)

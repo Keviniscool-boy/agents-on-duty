@@ -3,10 +3,12 @@ import { api } from "./api.js";
 
 const orderStatus = { delivered: "已签收", cancelled: "已取消", paid: "已支付", shipped: "已发货" };
 const refundStatus = { pending_review: "待人工审核", cancelled: "已撤回", approved: "已批准", rejected: "已拒绝", completed: "已完成" };
+const ticketStatus = { pending: "待处理", processing: "处理中", resolved: "已解决", cancelled: "已撤回", rejected: "已拒绝" };
 
 export default function AfterSales() {
   const [orders, setOrders] = useState([]);
   const [refunds, setRefunds] = useState([]);
+  const [tickets, setTickets] = useState([]);
   const [selected, setSelected] = useState("");
   const [reason, setReason] = useState("");
   const [applicationType, setApplicationType] = useState("");
@@ -16,12 +18,20 @@ export default function AfterSales() {
   const [notice, setNotice] = useState("");
   const [informationId, setInformationId] = useState("");
   const [information, setInformation] = useState("");
+  const [openTicketId, setOpenTicketId] = useState("");
+  const [ticketThread, setTicketThread] = useState({ ticket: null, messages: [] });
+  const [ticketReply, setTicketReply] = useState("");
   const requestKey = useRef("");
 
   const refresh = useCallback(async () => {
-    const [orderData, refundData] = await Promise.all([api("/api/orders"), api("/api/refunds")]);
+    const [orderData, refundData, ticketData] = await Promise.all([
+      api("/api/orders"),
+      api("/api/refunds"),
+      api("/api/tickets"),
+    ]);
     setOrders(orderData.orders || []);
     setRefunds(refundData.refunds || []);
+    setTickets(ticketData.tickets || []);
   }, []);
 
   useEffect(() => {
@@ -90,6 +100,44 @@ export default function AfterSales() {
     }
   }
 
+  async function toggleTicketThread(ticketId) {
+    if (openTicketId === ticketId) {
+      setOpenTicketId("");
+      return;
+    }
+    setError("");
+    setOpenTicketId(ticketId);
+    setTicketReply("");
+    try {
+      const data = await api(`/api/tickets/${encodeURIComponent(ticketId)}`);
+      setTicketThread({ ticket: data.ticket || null, messages: data.messages || [] });
+    } catch (err) {
+      setTicketThread({ ticket: null, messages: [] });
+      setError(err.message);
+    }
+  }
+
+  async function replyTicket(event) {
+    event.preventDefault();
+    if (busy || !openTicketId || !ticketReply.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/api/tickets/${encodeURIComponent(openTicketId)}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ content: ticketReply.trim() }),
+      });
+      setTicketReply("");
+      const data = await api(`/api/tickets/${encodeURIComponent(openTicketId)}`);
+      setTicketThread({ ticket: data.ticket || null, messages: data.messages || [] });
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="after-sales" aria-label="订单与售后">
       <header><h2>订单与售后</h2><p className="muted">演示订单，不涉及真实交易。</p></header>
@@ -100,7 +148,9 @@ export default function AfterSales() {
         <div className="after-sales-list">
           {orders.map((order) => <article className="after-sales-row" key={order.order_id}>
             <div><strong>{order.product}</strong><p>{order.order_id}</p><span>{orderStatus[order.status] || order.status} · ¥{(order.amount_cents / 100).toFixed(2)}</span></div>
-            <button className="text-button" disabled={busy || order.status !== "delivered"} onClick={() => { requestKey.current = crypto.randomUUID(); setSelected(order.order_id); setReason(""); setApplicationType(""); setError(""); setNotice(""); }}>申请退款</button>
+            {order.status === "delivered"
+              ? <button className="text-button" disabled={busy} onClick={() => { requestKey.current = crypto.randomUUID(); setSelected(order.order_id); setReason(""); setApplicationType(""); setError(""); setNotice(""); }}>申请退款</button>
+              : <span className="muted">{order.status === "cancelled" ? "已取消订单不支持退款申请" : "仅已签收订单可申请退款"}</span>}
           </article>)}
           {orders.length === 0 && <p className="muted">暂无订单</p>}
         </div>
@@ -120,6 +170,40 @@ export default function AfterSales() {
             {refund.status === "cancelled" && refund.resume_status && refund.resume_status !== "done" && <button type="button" className="text-button" disabled={busy} onClick={() => cancel(refund.id)}>重试会话恢复</button>}
           </article>)}
           {refunds.length === 0 && <p className="muted">暂无退款申请</p>}
+        </div>
+        <h3>我的工单</h3>
+        <div className="after-sales-list">
+          {tickets.map((ticket) => <article className="after-sales-row" key={ticket.ticket_id} data-status={ticket.status}>
+            <div>
+              <strong>{ticketStatus[ticket.status] || ticket.status}</strong>
+              <p>{ticket.ticket_id}</p>
+              <span>{ticket.title}</span>
+              <p className="muted">创建于 {new Date(ticket.created_at).toLocaleString("zh-CN")}</p>
+              {ticket.handled_by && <p>处理客服：{ticket.handled_by}</p>}
+              <button type="button" className="text-button" onClick={() => toggleTicketThread(ticket.ticket_id)}>
+                {openTicketId === ticket.ticket_id ? "收起对话" : "查看对话 / 追问"}
+              </button>
+            </div>
+            {openTicketId === ticket.ticket_id && <div className="ticket-thread-user">
+              <div className="ticket-thread">
+                {ticketThread.messages.length === 0 && <p className="muted">暂无对话；客服回复后会显示在这里。</p>}
+                {ticketThread.messages.map((message) => (
+                  <div key={message.id} className={`ticket-msg ${message.sender_role}`}>
+                    <span className="ticket-msg-meta">{message.sender_role === "agent" ? `客服 ${message.sender_name || ""}` : "我"} · {new Date(message.created_at).toLocaleString("zh-CN")}</span>
+                    <p>{message.content}</p>
+                  </div>
+                ))}
+              </div>
+              <form className="after-sales-form" onSubmit={replyTicket}>
+                <label>追问 / 补充说明<textarea required rows={2} maxLength={2000} value={ticketReply} onChange={(event) => setTicketReply(event.target.value)} /></label>
+                <div className="after-sales-actions">
+                  <button type="submit" className="primary" disabled={busy || !ticketReply.trim()}>发送</button>
+                  <button type="button" className="text-button" disabled={busy} onClick={() => setOpenTicketId("")}>收起</button>
+                </div>
+              </form>
+            </div>}
+          </article>)}
+          {tickets.length === 0 && <p className="muted">暂无工单；在对话中发送"转人工"即可创建。</p>}
         </div>
         {informationId && <form className="after-sales-form" onSubmit={submitInformation}>
           <label>补充信息<textarea required maxLength={1000} rows={3} value={information} onChange={(event) => setInformation(event.target.value)} /></label>

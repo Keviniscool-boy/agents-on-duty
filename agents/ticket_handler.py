@@ -3,7 +3,7 @@ import hashlib
 import json
 import uuid
 
-from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 
 from mcp_client.client import MCPClient
@@ -32,6 +32,20 @@ def _text_content(content) -> str:
 
 
 class TicketHandlerAgent:
+    # 明确要求人工服务的表达：由本地规则确定性转人工，不让模型自由决定是否建单。
+    HANDOFF_TERMS = (
+        "转人工",
+        "人工客服",
+        "找人工",
+        "转接人工",
+        "转接客服",
+        "需要人工",
+        "人工服务",
+        "联系人工",
+        "我要人工",
+        "请人工",
+    )
+
     def __init__(
         self,
         llm: ChatOpenAI,
@@ -39,6 +53,103 @@ class TicketHandlerAgent:
     ):
         self.llm = llm
         self.mcp_client = mcp_client
+
+    @classmethod
+    def is_handoff_request(cls, message: str) -> bool:
+        """判断用户消息是否为明确的转人工请求（供 supervisor 确定性路由复用）。"""
+        text = (message or "").lower()
+        return any(term in text for term in cls.HANDOFF_TERMS)
+
+    async def _create_handoff_ticket(self, state: dict, user_message: str) -> dict:
+        """确定性转人工：跳过 LLM 直接建单，响应包含工单号与初始状态。
+
+        工单归属认证上下文注入的 state["user_id"]，不信任请求正文；
+        幂等键限定在会话内，同一会话的重试/重复执行返回同一张工单。
+        建单失败时向上抛出明确错误，不伪称成功。
+        """
+        from tracing.admin_audit import current_trace, record_event
+
+        user_id = state.get("user_id", "")
+        session_id = state.get("session_id", "")
+        arguments = {
+            "title": "转人工请求",
+            "description": user_message[:500],
+            "category": "handoff",
+            "user_id": user_id,
+            "session_id": session_id,
+            "username": state.get("username", ""),
+            "idempotency_key": self.build_idempotency_key(
+                user_id,
+                {
+                    "title": "转人工请求",
+                    "description": user_message[:500],
+                    "category": "handoff",
+                },
+                session_id=session_id,
+            ),
+        }
+        request_id = str(uuid.uuid4())
+        fallback_used = False
+        retry_count = 0
+        try:
+            result, retry_count = await self._call_with_retry("ticket_create", arguments)
+        except (TimeoutError, ConnectionError, RuntimeError, AttributeError):
+            # AttributeError：测试/降级场景 mcp_client 不可用，直接走本地工具。
+            fallback_used = True
+            error_type = "mcp_unavailable"
+            result = await asyncio.to_thread(self._local_tool, "ticket_create", arguments)
+        else:
+            error_type = None
+
+        ticket_id = str((result or {}).get("ticket_id", ""))
+        if not ticket_id:
+            raise RuntimeError("ticket_create 未返回工单编号")
+
+        audit_context = current_trace()
+        if audit_context:
+            record_event(
+                kind="tool",
+                action="ticket_create",
+                outcome="fallback" if fallback_used else "success",
+                detail=f"retries={retry_count};error={error_type or 'none'};intent=handoff",
+                **audit_context,
+            )
+
+        status_label = "待处理" if (result or {}).get("status", "pending") == "pending" else "处理中"
+        prefix = (
+            "您已有一张人工服务工单，无需重复提交。"
+            if (result or {}).get("reused")
+            else "已为您创建人工服务工单。"
+        )
+        final_response = (
+            f"{prefix}工单编号 {ticket_id}，当前状态：{status_label}。"
+            "客服会尽快跟进；您可以在「订单售后」页面的「我的工单」中查看进度。"
+        )
+        return {
+            "messages": [AIMessage(content=final_response)],
+            "final_response": final_response,
+            "sub_results": {
+                **state.get("sub_results", {}),
+                "ticket_handler": final_response,
+                "ticket_handler_tool_results": [
+                    {
+                        "tool": "ticket_create",
+                        "request_id": request_id,
+                        "error_type": error_type,
+                        "fallback_used": fallback_used,
+                        "retry_count": retry_count,
+                        "result": result,
+                    }
+                ],
+                "handoff_ticket": {
+                    "ticket_id": ticket_id,
+                    "status": (result or {}).get("status", "pending"),
+                    "reused": bool((result or {}).get("reused")),
+                },
+                # 固定话术未经模型审查，标记后合规只做规则检查（见 compliance_checker）。
+                "fixed_reply": final_response,
+            },
+        }
 
     async def _call_mcp_tool(
         self,
@@ -85,7 +196,7 @@ class TicketHandlerAgent:
             # LLM 可能多传无关字段，白名单过滤防止 TypeError。
             allowed = {
                 "title", "description", "priority", "category", "idempotency_key",
-                "user_id", "session_id",
+                "user_id", "session_id", "username",
             }
             return ticket_create(**{key: arguments[key] for key in allowed if key in arguments})
         raise RuntimeError(f"没有本地备用工具: {tool_name}")
@@ -109,17 +220,19 @@ class TicketHandlerAgent:
                 await asyncio.sleep(retry_delays[retry_count])
 
     @staticmethod
-    def build_idempotency_key(user_id: str, arguments: dict) -> str:
+    def build_idempotency_key(user_id: str, arguments: dict, session_id: str = "") -> str:
         """按业务语义（用户 + 工单内容指纹）生成幂等键。
 
         不使用本次 tool_call id，这样重试、降级和用户重复提交
-        同一工单都命中同一条幂等记录。
+        同一工单都命中同一条幂等记录。传入 session_id 时指纹限定
+        在会话内（确定性转人工每会话一张工单，重试不重复建单）。
         """
         fingerprint = json.dumps(
             {
                 "title": arguments.get("title", ""),
                 "description": arguments.get("description", ""),
                 "category": arguments.get("category", "general"),
+                "session_id": session_id,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -129,6 +242,18 @@ class TicketHandlerAgent:
 
     @trace_agent_call("ticket_handler")
     async def process(self, state: dict):
+        # 确定性转人工：明确要求人工服务的请求跳过 LLM，直接建单。
+        user_message = next(
+            (
+                message.content
+                for message in reversed(state["messages"])
+                if isinstance(message, HumanMessage)
+            ),
+            "",
+        )
+        if self.is_handoff_request(user_message):
+            return await self._create_handoff_ticket(state, user_message)
+
         messages = [
             SystemMessage(
                 content=(
@@ -163,8 +288,8 @@ class TicketHandlerAgent:
                     "description": tool.description or "",
                     "parameters": {
                         **tool.input_schema,
-                        "properties": {k: v for k, v in tool.input_schema.get("properties", {}).items() if k not in {"user_id", "request_id", "idempotency_key", "session_id"}},
-                        "required": [k for k in tool.input_schema.get("required", []) if k not in {"user_id", "request_id", "idempotency_key", "session_id"}],
+                        "properties": {k: v for k, v in tool.input_schema.get("properties", {}).items() if k not in {"user_id", "request_id", "idempotency_key", "session_id", "username"}},
+                        "required": [k for k in tool.input_schema.get("required", []) if k not in {"user_id", "request_id", "idempotency_key", "session_id", "username"}],
                     },
                 },
             }

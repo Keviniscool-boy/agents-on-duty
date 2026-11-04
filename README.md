@@ -73,7 +73,18 @@ docker compose up --build -d
 
 1. 注册并登录账号，打开「订单售后」查看演示订单。
 2. 在终端执行 `docker compose exec app python -m auth.bootstrap_admin <用户名>`，再刷新页面，即可使用客服工作台。
-3. 在聊天中申请退款会进入退款审核队列；发送「我要转人工」会创建通用人工工单。管理员或客服从顶部打开「客服工作台」，分别在「退款申请」和「人工工单」队列中查看和处理。
+3. 在聊天中申请退款会进入退款审核队列；发送「转人工 / 找人工 / 转接人工客服」等表达会**确定性**创建人工工单（不经过模型判断，秒级返回工单号），并在「订单售后 → 我的工单」中展示编号与状态。管理员或客服从顶部打开「客服工作台」，分别在「退款申请」和「人工工单」队列中查看和处理；状态更新后用户侧同步可见。
+
+### 角色与权限
+
+| 接口 | 未认证 | 普通用户 | 客服(agent) | 管理员(admin) |
+|---|---|---|---|---|
+| 聊天 / 订单 / 售后 / 我的工单 (`/api/tickets`) | 401 | ✅（仅本人数据） | ✅ | ✅ |
+| 工作台队列与处理 (`/api/workbench/*`) | 401 | 403 | ✅ | ✅ |
+| 运维接口 (`/api/tools`、`/api/tools/call`、`/api/metrics`) | 401 | 403 | ✅ | ✅ |
+| 管理员接口 (`/api/admin/*`) | 401 | 403 | 403 | ✅ |
+
+前端按角色隐藏无权入口（如普通用户看不到「运维面板」），但后端角色校验是真正的防线；回归测试见 `test_permission_matrix.py`。工单归属认证身份，用户只能查询自己的工单。
 
 聊天中创建的申请会暂停 Agent 流程；售后页面直接创建的申请没有关联聊天线程。两者均为演示，不会产生真实退款。角色设置与故障恢复说明见 [售后业务说明](docs/after-sales.md)。
 
@@ -238,6 +249,9 @@ DASHSCOPE_API_KEY=dummy-key-for-ci python -m pytest -q
 | 人工接管、恢复、权限、并发 | `test_human_in_the_loop.py` |
 | 知识库 Embedding 降级 | `test_embedding_degradation.py` |
 | 合规检查与重写 | `test_compliance_loop.py` |
+| 运维接口权限矩阵、登出吊销 | `test_permission_matrix.py` |
+| 确定性转人工、工单闭环、跨用户隔离 | `test_handoff_tickets.py` |
+| 合规超时/异常降级、固定话术跳过 | `test_compliance_resilience.py` |
 
 > [!NOTE]
 > MySQL 不可达时，依赖真实 MySQL 的用例会显式跳过；CI 使用独立 MySQL 服务运行这些用例。运行聊天和首次建索引需要有效的模型服务配置。

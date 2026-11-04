@@ -1,4 +1,7 @@
+import asyncio
 import json
+import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -6,6 +9,12 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from tracing.otel_config import compliance_violation_codes, trace_agent_call
+
+
+logger = logging.getLogger(__name__)
+
+# 合规 LLM 检查超时：超时后按规则检查结果继续，不阻塞对话。
+COMPLIANCE_LLM_TIMEOUT_SECONDS = float(os.getenv("COMPLIANCE_LLM_TIMEOUT_SECONDS", "15"))
 
 
 @dataclass
@@ -16,6 +25,9 @@ class ComplianceResult:
     violations: list[str] = field(default_factory=list)
     suggestions: list[str] = field(default_factory=list)
     sanitized_content: str = ""
+    # 模型异常/超时降级为规则结果时为 True；组合语义是"规则结果说了算"。
+    degraded: bool = False
+    degraded_reason: str = ""
 
 
 # 用正则表达式识别常见的个人隐私信息。
@@ -118,6 +130,21 @@ class ComplianceCheckerAgent:
             sanitized_content=sanitized_content,
         )
 
+    @staticmethod
+    def _degraded_result(final_response: str, detail: str) -> ComplianceResult:
+        """模型超时/异常时的降级结果。
+
+        passed=True 仅表示"不再否决"，最终结论由规则检查结果决定
+        （full_check 里 passed = rule.passed and llm.passed）。
+        """
+        return ComplianceResult(
+            passed=True,
+            risk_level="low",
+            degraded=True,
+            degraded_reason=detail,
+            sanitized_content=final_response,
+        )
+
     @trace_agent_call("compliance_llm_check")
     async def llm_check(
         self,
@@ -125,7 +152,11 @@ class ComplianceCheckerAgent:
         final_response: str,
         tool_results: list[dict] | None = None,
     ) -> ComplianceResult:
-        """执行第二阶段：让 LLM 根据上下文做深度检查。"""
+        """执行第二阶段：让 LLM 根据上下文做深度检查。
+
+        超时或模型异常时降级为规则检查结果并记录可诊断日志，
+        绝不让对话停在未定义状态。
+        """
         messages = [
             SystemMessage(content=COMPLIANCE_SYSTEM_PROMPT),
             HumanMessage(
@@ -138,7 +169,30 @@ class ComplianceCheckerAgent:
             ),
         ]
 
-        response = await self.llm.ainvoke(messages)
+        try:
+            response = await asyncio.wait_for(
+                self.llm.ainvoke(messages),
+                timeout=COMPLIANCE_LLM_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "合规模型检查超时（%.1fs），按规则检查结果继续",
+                COMPLIANCE_LLM_TIMEOUT_SECONDS,
+            )
+            return self._degraded_result(
+                final_response,
+                f"compliance llm timeout after {COMPLIANCE_LLM_TIMEOUT_SECONDS}s",
+            )
+        except Exception as exc:
+            logger.warning(
+                "合规模型检查失败（%s: %s），按规则检查结果继续",
+                type(exc).__name__,
+                exc,
+            )
+            return self._degraded_result(
+                final_response,
+                f"compliance llm error: {type(exc).__name__}",
+            )
         raw_content = response.content.strip()
 
         try:
@@ -189,6 +243,8 @@ class ComplianceCheckerAgent:
             violations=rule_result.violations + llm_result.violations,
             suggestions=llm_result.suggestions,
             sanitized_content=rule_result.sanitized_content,
+            degraded=llm_result.degraded,
+            degraded_reason=llm_result.degraded_reason,
         )
 
     @trace_agent_call("compliance_process")
@@ -208,6 +264,30 @@ class ComplianceCheckerAgent:
             sub_results.get("ticket_handler_tool_results", [])
         )
         tool_results.extend(sub_results.get("knowledge_rag_context", []))
+
+        # 固定话术（问候/兜底/确定性转人工）只做规则检查，不再消耗合规模型。
+        # 仅当 final_response 与产生它的固定话术完全一致时跳过——
+        # 合规重写节点生成的新文本不在此列，仍走完整检查。
+        if sub_results.get("fixed_reply") == final_response:
+            result = await self.rule_check(final_response)
+            reason_parts = result.violations
+            reason = "; ".join(reason_parts) or f"risk level: {result.risk_level}"
+            return {
+                "compliance_passed": result.passed,
+                "compliance_reason": reason,
+                "sub_results": {
+                    **sub_results,
+                    "compliance": {
+                        "passed": result.passed,
+                        "reason": reason,
+                        "risk_level": result.risk_level,
+                        "violations": result.violations,
+                        "violation_codes": compliance_violation_codes(result.violations),
+                        "llm_skipped": True,
+                    },
+                },
+            }
+
         result = await self.full_check(
             user_message,
             final_response,
@@ -221,13 +301,14 @@ class ComplianceCheckerAgent:
             "compliance_passed": result.passed,
             "compliance_reason": reason,
             "sub_results": {
-                **state.get("sub_results", {}),
+                **sub_results,
                 "compliance": {
                     "passed": result.passed,
                     "reason": reason,
                     "risk_level": result.risk_level,
                     "violations": result.violations,
                     "violation_codes": compliance_violation_codes(result.violations),
+                    **({"degraded": True, "degraded_reason": result.degraded_reason} if result.degraded else {}),
                 },
             },
         }

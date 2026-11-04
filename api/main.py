@@ -77,7 +77,14 @@ from storage.after_sales import (
     release_session_turn,
     record_refund_decision,
 )
-from tools.ticket_store import list_tickets, update_ticket_status
+from tools.ticket_store import (
+    add_ticket_message,
+    get_ticket,
+    list_ticket_messages,
+    list_tickets,
+    list_user_tickets,
+    update_ticket_status,
+)
 from tracing.otel_config import get_metrics, init_tracer, trace_agent_call
 from tracing.admin_audit import trace_scope, list_events, list_runs
 from tracing.llm import TracedChatModel
@@ -242,6 +249,10 @@ class TicketStatusRequest(BaseModel):
     status: str
 
 
+class TicketMessageRequest(BaseModel):
+    content: str
+
+
 class RefundInformationRequest(BaseModel):
     content: str
 
@@ -263,6 +274,9 @@ class ChatResponse(BaseModel):
     # 阶段四：知识库回答的决策（answer / refuse / degraded）与转人工建议。
     knowledge_decision: str = ""
     handoff_required: bool = False
+    # 结构化订单卡片：order_query 工具的可信结果原样下发，前端据此渲染卡片；
+    # 没有结构化数据时前端保持纯文本显示，不从自然语言猜金额或状态。
+    order_cards: list[dict] = []
     # 阶段五：本次请求的 trace ID（同时通过 X-Trace-Id 响应头返回）。
     trace_id: str = ""
 
@@ -338,8 +352,8 @@ def _check_login_rate_limit(client_ip: str, username: str) -> None:
 
 
 @app.get("/api/tools")
-async def list_tools(current_user: dict = Depends(get_current_user)):
-    """返回 MCP 工具列表，仅允许已登录用户查看。"""
+async def list_tools(operator: dict = Depends(require_role("agent", "admin"))):
+    """返回 MCP 工具列表；运维信息仅限客服/管理员（权限矩阵见测试）。"""
     tools = await mcp_server.list_tools()
     tool_list = tools.tools if hasattr(tools, "tools") else tools
     return {"tools": [tool.model_dump() for tool in tool_list]}
@@ -348,9 +362,11 @@ async def list_tools(current_user: dict = Depends(get_current_user)):
 @app.post("/api/tools/call")
 async def call_tool(
     request: ToolCallRequest,
-    current_user: dict = Depends(get_current_user),
+    operator: dict = Depends(require_role("agent", "admin")),
 ):
-    """调用 MCP 工具，仅允许已登录用户调用。"""
+    """调用 MCP 工具；直接执行工具是运维能力，不对普通用户开放。
+
+    普通用户走业务端点：/api/orders、/api/refunds、/api/chat。"""
     if request.name not in {"order_query", "order_list", "refund_apply", "ticket_create", "knowledge_search", "risk_check"}:
         raise HTTPException(status_code=400, detail="不支持的工具调用")
     arguments = dict(request.arguments)
@@ -361,18 +377,108 @@ async def call_tool(
     if request.name == "ticket_create":
         arguments.pop("session_id", None)
     if request.name in {"order_query", "order_list", "refund_apply", "risk_check", "ticket_create"}:
-        arguments["user_id"] = current_user["id"]
+        arguments["user_id"] = operator["id"]
+    if request.name == "ticket_create":
+        arguments["username"] = operator.get("username", "")
     if request.name == "ticket_create":
         from agents.ticket_handler import TicketHandlerAgent
 
         arguments["idempotency_key"] = TicketHandlerAgent.build_idempotency_key(
-            current_user["id"], arguments
+            operator["id"], arguments
         )
     result = await mcp_server.call_tool(
         name=request.name,
         arguments=arguments,
     )
     return result.model_dump()
+
+
+@app.get("/api/tickets")
+def user_tickets(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    current_user: dict = Depends(get_current_user),
+):
+    """当前认证用户自己的工单列表（编号/状态/创建时间）。
+
+    只返回 user_id 与当前用户匹配的工单；客服/管理员查询自己的工单
+    同样只看到自己的（工作台队列走 /api/workbench/tickets）。
+    """
+    return list_user_tickets(current_user["id"], limit=limit, offset=offset)
+
+
+def _load_ticket_or_404(ticket_id: str) -> dict:
+    ticket = get_ticket(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="工单不存在")
+    return ticket
+
+
+@app.get("/api/tickets/{ticket_id}")
+def user_ticket_detail(
+    ticket_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """工单详情 + 对话记录；仅工单归属人可读。"""
+    ticket = _load_ticket_or_404(ticket_id)
+    if ticket.get("user_id") != current_user["id"]:
+        raise HTTPException(status_code=403, detail="只能查看自己的工单")
+    return {
+        "ticket": ticket,
+        "messages": list_ticket_messages(ticket_id),
+    }
+
+
+@app.post("/api/tickets/{ticket_id}/messages")
+def user_ticket_reply(
+    ticket_id: str,
+    request: TicketMessageRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """用户在自己的工单上追问/补充。"""
+    ticket = _load_ticket_or_404(ticket_id)
+    if ticket.get("user_id") != current_user["id"]:
+        raise HTTPException(status_code=403, detail="只能回复自己的工单")
+    try:
+        message = add_ticket_message(
+            ticket_id,
+            "user",
+            request.content,
+            current_user.get("username", ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"message": message}
+
+
+@app.get("/api/workbench/tickets/{ticket_id}/messages")
+def workbench_ticket_messages(
+    ticket_id: str,
+    operator: dict = Depends(require_role("agent", "admin")),
+):
+    """客服读取任意工单对话。"""
+    _load_ticket_or_404(ticket_id)
+    return {"messages": list_ticket_messages(ticket_id)}
+
+
+@app.post("/api/workbench/tickets/{ticket_id}/messages")
+def workbench_ticket_reply(
+    ticket_id: str,
+    request: TicketMessageRequest,
+    operator: dict = Depends(require_role("agent", "admin")),
+):
+    """客服在工单上回复用户；用户在"我的工单"里可见。"""
+    _load_ticket_or_404(ticket_id)
+    try:
+        message = add_ticket_message(
+            ticket_id,
+            "agent",
+            request.content,
+            operator.get("username", ""),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"message": message}
 
 
 @app.get("/api/orders")
@@ -807,6 +913,7 @@ async def _prepare_chat(
     initial_state = {
         "messages": [*history_messages, HumanMessage(content=request.message)],
         "user_id": current_user["id"],
+        "username": current_user.get("username", ""),
         "session_id": session_id,
         "intent": "",
         "current_agent": "",
@@ -834,6 +941,18 @@ async def _finalize_chat(
     sub_results = result.get("sub_results", {}) or {}
     knowledge_decision = sub_results.get("knowledge_decision", "")
     handoff_required = bool(sub_results.get("handoff_required", False))
+    # 只透传订单工具的可信结构化结果；失败结果与猜测文本一律不下发。
+    order_cards: list[dict] = []
+    for entry in sub_results.get("ticket_handler_tool_results", []):
+        payload = entry.get("result")
+        if not isinstance(payload, dict):
+            continue
+        if entry.get("tool") == "order_query" and payload.get("order_id") and not payload.get("error"):
+            order_cards.append(payload)
+        elif entry.get("tool") == "order_list":
+            for order in payload.get("orders", []):
+                if isinstance(order, dict) and order.get("order_id") and not order.get("error"):
+                    order_cards.append(order)
     response = result["final_response"]
     if interrupted:
         # 图暂停在 human_review：本轮给用户的是等待提示，
@@ -880,6 +999,7 @@ async def _finalize_chat(
         awaiting_human=interrupted,
         knowledge_decision=knowledge_decision,
         handoff_required=handoff_required,
+        order_cards=order_cards,
         trace_id=get_request_id(),
     )
 
@@ -1090,7 +1210,8 @@ async def get_sessions(current_user: dict = Depends(get_current_user)):
 
 
 @app.get("/api/metrics")
-async def get_agent_metrics(current_user: dict = Depends(get_current_user)):
+async def get_agent_metrics(operator: dict = Depends(require_role("agent", "admin"))):
+    """运行指标属于运维信息，仅限客服/管理员查看。"""
     return {"agent_metrics": get_metrics().get_summary()}
 
 
@@ -1115,11 +1236,30 @@ async def register(request: AuthRequest, response: Response):
     return AuthResponse(access_token=token, user=user)
 
 
+def _extract_bearer_token(request: Request) -> str:
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return ""
+
+
 @app.post("/api/auth/logout")
 async def logout(request: Request, response: Response):
-    """清除 Cookie 并撤销当前 JWT，避免登出后令牌继续可用。"""
-    token = request.cookies.get("agent_token")
-    if token:
+    """吊销当前令牌并清除 Cookie，避免登出后令牌继续可用。
+
+    支持两种携带方式：Authorization: Bearer（评测脚本/CLI）与
+    httpOnly Cookie（浏览器）。确定行为：与 get_current_user 的优先级
+    一致，Bearer 优先；若两者同时存在，能解析的有效令牌都执行吊销，
+    保证没有可用残余。无效/过期令牌静默忽略，仍清除 Cookie。
+    """
+    candidates: list[str] = []
+    bearer_token = _extract_bearer_token(request)
+    if bearer_token:
+        candidates.append(bearer_token)
+    cookie_token = request.cookies.get("agent_token")
+    if cookie_token and cookie_token not in candidates:
+        candidates.append(cookie_token)
+    for token in candidates:
         try:
             payload = jwt.decode(
                 token,
@@ -1132,7 +1272,7 @@ async def logout(request: Request, response: Response):
                     datetime.fromtimestamp(payload["exp"], timezone.utc).isoformat(),
                 )
         except (jwt.InvalidTokenError, RuntimeError, ValueError, TypeError):
-            pass
+            continue
     clear_auth_cookie(response)
     return {"detail": "logged out"}
 

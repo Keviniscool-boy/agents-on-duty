@@ -45,5 +45,7 @@ class FallbackAgent:
             "sub_results": {
                 **state.get("sub_results", {}),
                 "fallback": response,
+                # 固定话术：合规节点只做规则检查，不再调用合规模型。
+                "fixed_reply": response,
             },
         }

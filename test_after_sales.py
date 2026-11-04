@@ -30,7 +30,11 @@ def client(isolated_db):
     from api.main import app
 
     async def current_user(request: Request):
-        return {"id": request.headers.get("X-Test-User", "user-a"), "username": "test"}
+        return {
+            "id": request.headers.get("X-Test-User", "user-a"),
+            "username": "test",
+            "role": request.headers.get("X-Test-Role", "user"),
+        }
 
     app.dependency_overrides[get_current_user] = current_user
     try:
@@ -212,10 +216,14 @@ def test_api_requires_authentication(isolated_db):
 
 
 def test_mcp_order_tool_uses_authenticated_user(client):
+    """普通用户禁止直调工具（403）；授权调用者的身份由服务端注入，正文 user_id 无效。"""
     order = next(item for item in client.get("/api/orders").json()["orders"] if item["status"] == "delivered")
-    response = client.post("/api/tools/call", headers={"X-Test-User": "user-b"}, json={
-        "name": "order_query", "arguments": {"order_id": order["order_id"], "user_id": "user-a"},
-    })
+    arguments = {"name": "order_query", "arguments": {"order_id": order["order_id"], "user_id": "user-a"}}
+    # 普通用户根本没有直调 MCP 工具的权限（运维面，见 test_permission_matrix）。
+    forbidden = client.post("/api/tools/call", headers={"X-Test-User": "user-b"}, json=arguments)
+    assert forbidden.status_code == 403
+    # 客服可以调用，但仍查不到他人订单——服务端身份覆盖依然生效。
+    response = client.post("/api/tools/call", headers={"X-Test-User": "user-b", "X-Test-Role": "agent"}, json=arguments)
     assert response.status_code == 200
     assert "order_not_found" in response.text
 
