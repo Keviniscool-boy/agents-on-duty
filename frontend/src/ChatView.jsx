@@ -6,7 +6,7 @@ import {
   useState,
 } from "react";
 import { API_URL, api, logout, INTENT_CLASS, INTENT_LABELS } from "./api.js";
-import { renderSafeMarkdown } from "./markdown.js";
+import { renderSafeMarkdown, plainText } from "./markdown.js";
 import AfterSales from "./AfterSales.jsx";
 import WorkbenchPanel from "./WorkbenchPanel.jsx";
 import AdminPanel from "./AdminPanel.jsx";
@@ -330,7 +330,7 @@ export default function ChatView({ user, onLogout }) {
 
   const currentTitle = useMemo(() => {
     const session = sessions.find((item) => item.session_id === sessionId);
-    return session?.title || "新会话";
+    return plainText(session?.title) || "新会话";
   }, [sessionId, sessions]);
 
   return (
@@ -442,7 +442,7 @@ export default function ChatView({ user, onLogout }) {
                 key={session.session_id}
                 onClick={() => loadHistory(session.session_id)}
               >
-                <span className="session-title">{session.title || "历史会话"}</span>
+                <span className="session-title">{plainText(session.title) || "历史会话"}</span>
                 <span>{new Date(session.created_at).toLocaleDateString("zh-CN")}</span>
               </button>
             ))}
