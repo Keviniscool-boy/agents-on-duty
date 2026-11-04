@@ -35,6 +35,21 @@
 | 工具调用/失败/降级 | `ticket_handler` 写入 `admin_events(kind=tool)`，含 `retries/error` |
 | 错误与降级原因 | 节点异常类名、工具 `error_type`、存储 `storage_degradation` 计数 |
 
+## 阶段七补充场景（2026-11-04，feat/product-fix）
+
+| 场景 | 覆盖方式 | 用例 |
+|---|---|---|
+| 运维接口越权（普通用户直调工具/指标） | 单元测试（权限矩阵） | `test_permission_matrix.py`（401/403/agent/admin 全矩阵） |
+| 登出后令牌残留（Bearer/Cookie 双通道） | 单元测试 | `test_permission_matrix.py::test_logout_revokes_bearer_token`、`test_logout_with_both_cookie_and_bearer_revokes_both` |
+| 转人工误路由/漏路由 | 单元测试（确定性词表） | `test_handoff_tickets.py::test_explicit_handoff_routes_deterministically`、`test_non_handoff_messages_do_not_route_to_handoff` |
+| 转人工重复建单（重试/降级） | 单元测试（会话内幂等） | `test_handoff_tickets.py::test_handoff_is_idempotent_within_session` |
+| 工单跨用户泄漏 | 单元测试 | `test_handoff_tickets.py::test_user_tickets_isolated_across_users`、`test_user_sees_status_after_agent_update` |
+| 合规 LLM 超时/异常 | 单元 + 图级测试（降级为规则结果） | `test_compliance_resilience.py::test_llm_timeout_degrades_to_rule_result`、`test_compliance_timeout_flows_through_whole_graph` |
+| 固定话术误耗合规模型 | 图级测试（零 LLM 调用） | `test_compliance_loop.py::test_fixed_fallback_skips_compliance_llm` |
+| 聊天 XSS 注入 | 前端 node --test（先转义后白名单渲染） | `frontend/src/markdown.test.js` |
+| 后端挂起导致前端永久等待 | 浏览器实测（docker pause）+ 看门狗逻辑 | 连接期 20s / 流期静默 90s 中止并提示重试 |
+| 订单结构化数据缺失时编造 | 单元测试（仅透传可信工具结果） | `test_handoff_tickets.py::test_finalize_chat_extracts_order_cards` |
+
 ## 版本化评测
 
 - 套件版本：`evaluation/suite.py::SUITE_VERSION`（当前 `2026.11-stage5`）。
