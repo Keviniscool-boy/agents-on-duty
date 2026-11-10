@@ -123,7 +123,9 @@ def test_search_with_dead_embedding_at_query_time_raises_unavailable(ltm, tmp_pa
 def test_fallback_search_works_when_index_is_none(ltm):
     """索引缺失但文档在（损坏/身份变更路径）：B14 关键词兜底仍然可用。"""
     ltm.index = None
-    ltm.documents = [{"id": "x", "content": "退款需要在七天内申请", "source": "s", "metadata": {}}]
+    ltm.documents = [
+        {"id": "x", "content": "退款需要在七天内申请", "source": "s", "metadata": {}}
+    ]
     import asyncio
 
     results = asyncio.run(ltm.search("退款 七天", min_score=0.5))
@@ -174,9 +176,16 @@ class FakeReplyLLM:
 
 @pytest.mark.parametrize(
     ("knowledge_status", "overall_status"),
-    [("degraded", "degraded"), ("empty", "degraded"), ("unknown", "unknown"), ("ready", "healthy")],
+    [
+        ("degraded", "degraded"),
+        ("empty", "degraded"),
+        ("unknown", "unknown"),
+        ("ready", "healthy"),
+    ],
 )
-def test_health_reports_last_observed_knowledge_status(monkeypatch, knowledge_status, overall_status):
+def test_health_reports_last_observed_knowledge_status(
+    monkeypatch, knowledge_status, overall_status
+):
     import api.main as api_main
 
     class FakeMemory:
@@ -196,17 +205,29 @@ def test_lifespan_starts_when_embedding_index_build_fails(monkeypatch):
     from unittest.mock import AsyncMock
     import api.main as api_main
 
-    memory = SimpleNamespace(documents=[], index_build_failed=True, load_knowledge_base=AsyncMock(return_value=0))
+    memory = SimpleNamespace(
+        documents=[],
+        index_build_failed=True,
+        load_knowledge_base=AsyncMock(return_value=0),
+    )
     monkeypatch.setattr(api_main, "long_term_memory", memory)
     monkeypatch.setattr(api_main, "assert_jwt_configured", lambda: None)
-    monkeypatch.setattr(api_main, "mysql_store", SimpleNamespace(self_check=lambda: None))
+    monkeypatch.setattr(
+        api_main, "mysql_store", SimpleNamespace(self_check=lambda: None)
+    )
     monkeypatch.setattr(api_main, "init_database", lambda: None)
     monkeypatch.setattr(api_main, "init_tracer", lambda **kwargs: None)
     monkeypatch.setattr(api_main, "ChatOpenAI", lambda **kwargs: object())
-    monkeypatch.setattr(api_main, "create_sqlite_checkpointer", AsyncMock(return_value=object()))
+    monkeypatch.setattr(
+        api_main, "create_sqlite_checkpointer", AsyncMock(return_value=object())
+    )
     monkeypatch.setattr(api_main, "close_checkpoint", AsyncMock())
-    monkeypatch.setattr(api_main, "create_supervisor_graph", lambda *args, **kwargs: object())
-    monkeypatch.setattr(api_main, "mcp_client", SimpleNamespace(connect=AsyncMock(), close=AsyncMock()))
+    monkeypatch.setattr(
+        api_main, "create_supervisor_graph", lambda *args, **kwargs: object()
+    )
+    monkeypatch.setattr(
+        api_main, "mcp_client", SimpleNamespace(connect=AsyncMock(), close=AsyncMock())
+    )
 
     async def scenario():
         async with api_main.lifespan(api_main.app):

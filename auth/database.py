@@ -62,7 +62,9 @@ def init_database() -> None:
             CREATE INDEX IF NOT EXISTS idx_admin_events_kind ON admin_events(kind, id);
             """
         )
-        columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+        columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(users)")
+        }
         if "role" not in columns:
             try:
                 connection.execute(
@@ -122,19 +124,24 @@ def get_user_by_id(user_id: str) -> sqlite3.Row | None:
         ).fetchone()
 
 
-def set_user_role(username: str, role: str, actor_id: str = "bootstrap") -> sqlite3.Row | None:
+def set_user_role(
+    username: str, role: str, actor_id: str = "bootstrap"
+) -> sqlite3.Row | None:
     """在同一事务里完成角色变更并记录审计。"""
     if role not in {"user", "agent", "admin"}:
         raise ValueError("invalid_role")
     with _connection() as connection:
         connection.execute("BEGIN IMMEDIATE")
         existing = connection.execute(
-            "SELECT id, username, role, created_at FROM users WHERE username = ?", (username,)
+            "SELECT id, username, role, created_at FROM users WHERE username = ?",
+            (username,),
         ).fetchone()
         if existing is None:
             return None
         if existing["role"] == "admin" and role != "admin":
-            count = connection.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'").fetchone()[0]
+            count = connection.execute(
+                "SELECT COUNT(*) FROM users WHERE role = 'admin'"
+            ).fetchone()[0]
             if count <= 1:
                 raise ValueError("last_admin")
         if existing["role"] == role:
@@ -145,7 +152,12 @@ def set_user_role(username: str, role: str, actor_id: str = "bootstrap") -> sqli
         )
         connection.execute(
             "INSERT INTO admin_events (created_at, kind, action, outcome, actor_id, target_id, detail) VALUES (?, 'role', 'role_changed', 'success', ?, ?, ?)",
-            (datetime.now(timezone.utc).isoformat(), actor_id, existing["id"], f"{existing['role']}->{role}"),
+            (
+                datetime.now(timezone.utc).isoformat(),
+                actor_id,
+                existing["id"],
+                f"{existing['role']}->{role}",
+            ),
         )
         return connection.execute(
             "SELECT id, username, role, created_at FROM users WHERE username = ?",

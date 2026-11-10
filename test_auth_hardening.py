@@ -73,8 +73,12 @@ def test_expired_revocations_are_pruned(isolated_auth, monkeypatch):
     """过期的吊销记录在检查时清理，不长期占用撤销表。"""
     from datetime import datetime, timedelta, timezone
 
-    auth_db.revoke_token("expired-jti", (datetime.now(timezone.utc) - timedelta(days=1)).isoformat())
-    auth_db.revoke_token("live-jti", (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
+    auth_db.revoke_token(
+        "expired-jti", (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    )
+    auth_db.revoke_token(
+        "live-jti", (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    )
 
     assert auth_db.is_token_revoked("expired-jti") is False, "过期吊销应视为失效并清理"
     assert auth_db.is_token_revoked("live-jti") is True

@@ -34,6 +34,7 @@ logger = logging.getLogger("memory.working_memory")
 _REDIS_PROBE_BASE_SECONDS = 1.0
 _REDIS_PROBE_MAX_SECONDS = 30.0
 
+
 # 需要上报降级事件的指标来源，延迟导入避免 tracing 强耦合。
 def _record_degradation(from_tier: str, to_tier: str) -> None:
     logger.warning("存储降级：%s -> %s", from_tier, to_tier)
@@ -122,7 +123,9 @@ class WorkingMemory:
     def _redis_key(self, session_id: str, suffix: str) -> str:
         return f"smartcs:working_memory:{session_id}:{suffix}"
 
-    def _write_redis(self, session_id: str, data: dict[str, Any], entry: dict[str, Any]) -> bool:
+    def _write_redis(
+        self, session_id: str, data: dict[str, Any], entry: dict[str, Any]
+    ) -> bool:
         """写 Redis 一层；失败返回 False 并标记故障（A1 扇出的一支）。"""
         import json
 
@@ -145,7 +148,9 @@ class WorkingMemory:
             _record_degradation("redis", "mysql")
             return False
 
-    def _write_mysql(self, session_id: str, user_id: str, data: dict[str, Any], entry: dict[str, Any]) -> bool:
+    def _write_mysql(
+        self, session_id: str, user_id: str, data: dict[str, Any], entry: dict[str, Any]
+    ) -> bool:
         """写 MySQL 一层；任何异常（含 SQL 执行错误）都算该层失败（A1/A2）。
 
         A6/A7：上下文合并通过 merge_working_context 在行锁内原子完成，
@@ -162,14 +167,14 @@ class WorkingMemory:
             logger.warning("MySQL 写入失败，本条仅存本地副本：%s", exc)
             return False
 
-    def _write_local(self, session_id: str, data: dict[str, Any], entry: dict[str, Any]) -> None:
+    def _write_local(
+        self, session_id: str, data: dict[str, Any], entry: dict[str, Any]
+    ) -> None:
         """写进程内副本（始终执行，是读取回退链的最后一环，A3）。"""
         with self._lock:
             self._store[session_id].append(entry)
             if len(self._store[session_id]) > self._max_entries:
-                self._store[session_id] = self._store[session_id][
-                    -self._max_entries:
-                ]
+                self._store[session_id] = self._store[session_id][-self._max_entries :]
             self._context[session_id].update(data)
 
     def update(

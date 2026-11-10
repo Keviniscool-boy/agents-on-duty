@@ -27,8 +27,7 @@ RESULTS_DIR = Path(__file__).with_name("results")
 
 def load_cases() -> list[dict]:
     return [
-        json.loads(line)
-        for line in CASES_PATH.read_text(encoding="utf-8").splitlines()
+        json.loads(line) for line in CASES_PATH.read_text(encoding="utf-8").splitlines()
     ]
 
 
@@ -98,7 +97,11 @@ async def main() -> None:
     total = len(results)
 
     def rate(key: str) -> float:
-        return round(sum(1 for item in results if item.get(key)) / total * 100, 2) if total else 0.0
+        return (
+            round(sum(1 for item in results if item.get(key)) / total * 100, 2)
+            if total
+            else 0.0
+        )
 
     summary = {
         "metric": "rag_evaluation_stage4",
@@ -120,7 +123,9 @@ async def main() -> None:
     )
     print(f"\n召回率@k: {summary['recall_at_k_percent']}%")
     print(f"来源匹配率（初步）: {summary['citation_correct_rate_percent']}%")
-    print(f"完整来源字符串匹配率（非断言级验证）: {summary['citation_full_rate_percent']}%")
+    print(
+        f"完整来源字符串匹配率（非断言级验证）: {summary['citation_full_rate_percent']}%"
+    )
     print(f"拒答准确率: {summary['refusal_accuracy_percent']}%")
     print(f"转人工准确率: {summary['handoff_accuracy_percent']}%")
     print(f"回答关键词命中率: {summary['answer_accuracy_percent']}%")

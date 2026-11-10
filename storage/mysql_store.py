@@ -93,7 +93,11 @@ class MySQLStore:
             except Exception as exc:
                 last_exc = exc
                 if attempt < _CONNECT_ATTEMPTS - 1:
-                    time.sleep(_CONNECT_BACKOFF_SECONDS[min(attempt, len(_CONNECT_BACKOFF_SECONDS) - 1)])
+                    time.sleep(
+                        _CONNECT_BACKOFF_SECONDS[
+                            min(attempt, len(_CONNECT_BACKOFF_SECONDS) - 1)
+                        ]
+                    )
         self._connect_cooldown_until = time.monotonic() + _CONNECT_COOLDOWN_SECONDS
         raise MySQLUnavailableError(
             f"Cannot connect to MySQL after {_CONNECT_ATTEMPTS} attempts: {last_exc}"
@@ -251,7 +255,11 @@ class MySQLStore:
             except pymysql.err.OperationalError as exc:
                 if exc.args and exc.args[0] in _LOCK_RETRYABLE_ERRORS:
                     last_exc = exc
-                    time.sleep(_MERGE_RETRY_BACKOFF[min(attempt, len(_MERGE_RETRY_BACKOFF) - 1)])
+                    time.sleep(
+                        _MERGE_RETRY_BACKOFF[
+                            min(attempt, len(_MERGE_RETRY_BACKOFF) - 1)
+                        ]
+                    )
                 else:
                     self._conn = None
                     raise MySQLUnavailableError(f"MySQL merge failed: {exc}") from exc

@@ -17,7 +17,11 @@ export async function api(path, options = {}) {
   }
   if (!response.ok) {
     const detail = data.detail;
-    throw new Error(typeof detail === "string" ? detail : detail?.message || "请求失败，请稍后重试");
+    throw new Error(
+      typeof detail === "string"
+        ? detail
+        : detail?.message || "请求失败，请稍后重试",
+    );
   }
   return data;
 }

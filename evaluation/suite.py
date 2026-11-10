@@ -39,7 +39,9 @@ def environment() -> dict:
         "platform": platform.platform(),
         "model": os.getenv("MODEL_NAME", ""),
         "embedding_model": os.getenv("EMBEDDING_MODEL", ""),
-        "embedding_provider": "dashscope" if os.getenv("DASHSCOPE_API_KEY") else "openai-compatible",
+        "embedding_provider": "dashscope"
+        if os.getenv("DASHSCOPE_API_KEY")
+        else "openai-compatible",
     }
 
 
@@ -81,7 +83,13 @@ def dataset_info(path: str | Path, cases: list[dict] | None = None) -> dict:
             "sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
             "cases": len(cases),
         }
-    count = len([line for line in target.read_text(encoding="utf-8").splitlines() if line.strip()])
+    count = len(
+        [
+            line
+            for line in target.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    )
     return {"path": target.name, "sha256": file_sha256(target), "cases": count}
 
 
@@ -90,7 +98,8 @@ def corpus_info(kb_dir: str | Path) -> dict:
     root = Path(kb_dir)
     digest = hashlib.sha256()
     files = sorted(
-        path for path in root.rglob("*")
+        path
+        for path in root.rglob("*")
         if path.is_file() and path.suffix.lower() in {".md", ".txt"}
     )
     for path in files:
@@ -104,7 +113,9 @@ def corpus_info(kb_dir: str | Path) -> dict:
 def write_report(report: dict, path: str | Path | None = None) -> Path:
     target = Path(path) if path else RESULTS_DIR / f"{report['suite']}-latest.json"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    target.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return target
 
 
@@ -113,7 +124,9 @@ COMPARABLE_KEYS = ("suite_version", "model", "embedding_model", "embedding_provi
 
 def compare(baseline: dict, candidate: dict) -> dict:
     """仅当套件、模型、数据集、语料与样本量全部一致时才输出差异。"""
-    reasons = [key for key in COMPARABLE_KEYS if baseline.get(key) != candidate.get(key)]
+    reasons = [
+        key for key in COMPARABLE_KEYS if baseline.get(key) != candidate.get(key)
+    ]
     baseline_dataset = baseline.get("dataset") or {}
     candidate_dataset = candidate.get("dataset") or {}
     baseline_corpus = baseline.get("corpus") or {}
@@ -133,8 +146,10 @@ def compare(baseline: dict, candidate: dict) -> dict:
     baseline_cases = baseline_dataset.get("cases")
     candidate_cases = candidate_dataset.get("cases")
     if (
-        not isinstance(baseline_cases, int) or baseline_cases <= 0
-        or not isinstance(candidate_cases, int) or candidate_cases <= 0
+        not isinstance(baseline_cases, int)
+        or baseline_cases <= 0
+        or not isinstance(candidate_cases, int)
+        or candidate_cases <= 0
     ):
         reasons.append("dataset_cases_missing")
     elif baseline_cases != candidate_cases:
@@ -143,20 +158,28 @@ def compare(baseline: dict, candidate: dict) -> dict:
     baseline_size = baseline.get("sample_size")
     candidate_size = candidate.get("sample_size")
     if (
-        not isinstance(baseline_size, int) or baseline_size <= 0
-        or not isinstance(candidate_size, int) or candidate_size <= 0
+        not isinstance(baseline_size, int)
+        or baseline_size <= 0
+        or not isinstance(candidate_size, int)
+        or candidate_size <= 0
     ):
         reasons.append("sample_size_missing")
     elif baseline_size != candidate_size:
         reasons.append("sample_size")
-    elif isinstance(baseline_cases, int) and baseline_cases > 0 and baseline_size != baseline_cases:
+    elif (
+        isinstance(baseline_cases, int)
+        and baseline_cases > 0
+        and baseline_size != baseline_cases
+    ):
         reasons.append("dataset_cases_vs_sample_size")
 
     baseline_documents = baseline_corpus.get("documents")
     candidate_documents = candidate_corpus.get("documents")
     if (
-        not isinstance(baseline_documents, int) or baseline_documents <= 0
-        or not isinstance(candidate_documents, int) or candidate_documents <= 0
+        not isinstance(baseline_documents, int)
+        or baseline_documents <= 0
+        or not isinstance(candidate_documents, int)
+        or candidate_documents <= 0
     ):
         reasons.append("corpus_documents_missing")
     elif baseline_documents != candidate_documents:
@@ -169,6 +192,8 @@ def compare(baseline: dict, candidate: dict) -> dict:
     baseline_summary = baseline.get("summary", {})
     candidate_summary = candidate.get("summary", {})
     for key, value in candidate_summary.items():
-        if isinstance(value, (int, float)) and isinstance(baseline_summary.get(key), (int, float)):
+        if isinstance(value, (int, float)) and isinstance(
+            baseline_summary.get(key), (int, float)
+        ):
             deltas[key] = round(value - baseline_summary[key], 2)
     return {"comparable": True, "reasons": [], "deltas": deltas}

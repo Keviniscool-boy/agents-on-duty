@@ -61,7 +61,12 @@ function createProjectModel(): {
       baseUrl,
       reasoning: false,
       input: ["text"],
-      cost: { input: inputPrice, output: outputPrice, cacheRead: 0, cacheWrite: 0 },
+      cost: {
+        input: inputPrice,
+        output: outputPrice,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
       contextWindow: 128000,
       maxTokens: 8192,
     };

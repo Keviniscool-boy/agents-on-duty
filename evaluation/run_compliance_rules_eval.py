@@ -10,12 +10,36 @@ from agents.compliance_checker import ComplianceCheckerAgent
 
 
 CASES = [
-    {"id": "rule-001", "content": "退款政策是签收后7天内可以申请。", "expected_passed": True},
-    {"id": "rule-002", "content": "请联系手机号13800138000。", "expected_passed": False},
-    {"id": "rule-003", "content": "身份证号为110101199001011234。", "expected_passed": False},
-    {"id": "rule-004", "content": "银行卡号为6222021234567890123。", "expected_passed": False},
-    {"id": "rule-005", "content": "联系邮箱test@example.com。", "expected_passed": False},
-    {"id": "rule-006", "content": "本产品 guaranteed profit，risk-free investment。", "expected_passed": False},
+    {
+        "id": "rule-001",
+        "content": "退款政策是签收后7天内可以申请。",
+        "expected_passed": True,
+    },
+    {
+        "id": "rule-002",
+        "content": "请联系手机号13800138000。",
+        "expected_passed": False,
+    },
+    {
+        "id": "rule-003",
+        "content": "身份证号为110101199001011234。",
+        "expected_passed": False,
+    },
+    {
+        "id": "rule-004",
+        "content": "银行卡号为6222021234567890123。",
+        "expected_passed": False,
+    },
+    {
+        "id": "rule-005",
+        "content": "联系邮箱test@example.com。",
+        "expected_passed": False,
+    },
+    {
+        "id": "rule-006",
+        "content": "本产品 guaranteed profit，risk-free investment。",
+        "expected_passed": False,
+    },
 ]
 
 

@@ -84,22 +84,32 @@ def _connect():
     columns = {row["name"] for row in db.execute("PRAGMA table_info(refund_requests)")}
     if "session_id" not in columns:
         try:
-            db.execute("ALTER TABLE refund_requests ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
+            db.execute(
+                "ALTER TABLE refund_requests ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"
+            )
         except sqlite3.OperationalError as exc:
             if "duplicate column name" not in str(exc).lower():
                 db.close()
                 raise
-    for table, column in (("orders", "product_type"), ("refund_requests", "application_type"),
-                          ("refund_requests", "policy_action"), ("refund_requests", "policy_reason"),
-                          ("refund_requests", "policy_ref")):
-        if column not in {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}:
+    for table, column in (
+        ("orders", "product_type"),
+        ("refund_requests", "application_type"),
+        ("refund_requests", "policy_action"),
+        ("refund_requests", "policy_reason"),
+        ("refund_requests", "policy_ref"),
+    ):
+        if column not in {
+            row["name"] for row in db.execute(f"PRAGMA table_info({table})")
+        }:
             try:
                 db.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
             except sqlite3.OperationalError as exc:
                 if "duplicate column name" not in str(exc).lower():
                     db.close()
                     raise
-    outbox_columns = {row["name"] for row in db.execute("PRAGMA table_info(handoff_outbox)")}
+    outbox_columns = {
+        row["name"] for row in db.execute("PRAGMA table_info(handoff_outbox)")
+    }
     if "completed_at" not in outbox_columns:
         try:
             db.execute("ALTER TABLE handoff_outbox ADD COLUMN completed_at TEXT")
@@ -107,10 +117,14 @@ def _connect():
             if "duplicate column name" not in str(exc).lower():
                 db.close()
                 raise
-    outbox_columns = {row["name"] for row in db.execute("PRAGMA table_info(handoff_outbox)")}
+    outbox_columns = {
+        row["name"] for row in db.execute("PRAGMA table_info(handoff_outbox)")
+    }
     if "failure_count" not in outbox_columns:
         try:
-            db.execute("ALTER TABLE handoff_outbox ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0")
+            db.execute(
+                "ALTER TABLE handoff_outbox ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0"
+            )
         except sqlite3.OperationalError as exc:
             if "duplicate column name" not in str(exc).lower():
                 db.close()
@@ -126,7 +140,10 @@ def claim_session_turn(session_id: str, token: str) -> bool:
     db = _connect()
     try:
         db.execute("BEGIN IMMEDIATE")
-        db.execute("DELETE FROM session_turn_locks WHERE session_id = ? AND expires_at <= ?", (session_id, _now().isoformat()))
+        db.execute(
+            "DELETE FROM session_turn_locks WHERE session_id = ? AND expires_at <= ?",
+            (session_id, _now().isoformat()),
+        )
         result = db.execute(
             "INSERT OR IGNORE INTO session_turn_locks VALUES (?, ?, ?)",
             (session_id, token, (_now() + timedelta(minutes=5)).isoformat()),
@@ -139,7 +156,10 @@ def claim_session_turn(session_id: str, token: str) -> bool:
 
 def release_session_turn(session_id: str, token: str) -> None:
     with closing(_connect()) as db, db:
-        db.execute("DELETE FROM session_turn_locks WHERE session_id = ? AND token = ?", (session_id, token))
+        db.execute(
+            "DELETE FROM session_turn_locks WHERE session_id = ? AND token = ?",
+            (session_id, token),
+        )
 
 
 def list_orders(user_id: str) -> list[dict]:
@@ -148,33 +168,67 @@ def list_orders(user_id: str) -> list[dict]:
         raise ValueError("user_id is required")
     prefix = hashlib.sha256(user_id.encode()).hexdigest()[:24].upper()
     with closing(_connect()) as db, db:
-        for suffix, status, delivered in (("1", "delivered", (_now() - timedelta(days=1)).isoformat()),
-                                           ("2", "cancelled", None)):
-            db.execute("INSERT OR IGNORE INTO orders (id, user_id, status, amount_cents, delivered_at, product, product_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (f"DEMO-{prefix}-{suffix}", user_id, status, 29900, delivered, "演示商品", "normal"))
-        rows = db.execute("SELECT id AS order_id, status, amount_cents, delivered_at, product, product_type FROM orders WHERE user_id = ? ORDER BY id", (user_id,)).fetchall()
+        for suffix, status, delivered in (
+            ("1", "delivered", (_now() - timedelta(days=1)).isoformat()),
+            ("2", "cancelled", None),
+        ):
+            db.execute(
+                "INSERT OR IGNORE INTO orders (id, user_id, status, amount_cents, delivered_at, product, product_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    f"DEMO-{prefix}-{suffix}",
+                    user_id,
+                    status,
+                    29900,
+                    delivered,
+                    "演示商品",
+                    "normal",
+                ),
+            )
+        rows = db.execute(
+            "SELECT id AS order_id, status, amount_cents, delivered_at, product, product_type FROM orders WHERE user_id = ? ORDER BY id",
+            (user_id,),
+        ).fetchall()
     return [{**dict(row), "mock": True} for row in rows]
 
 
 def get_order(user_id: str, order_id: str) -> dict:
     with closing(_connect()) as db:
-        row = db.execute("SELECT id AS order_id, status, amount_cents, delivered_at, product, product_type FROM orders WHERE id = ? AND user_id = ?", (order_id, user_id)).fetchone()
-    return {**dict(row), "mock": True} if row else {"error": "order_not_found", "message": "订单不存在或无权访问"}
+        row = db.execute(
+            "SELECT id AS order_id, status, amount_cents, delivered_at, product, product_type FROM orders WHERE id = ? AND user_id = ?",
+            (order_id, user_id),
+        ).fetchone()
+    return (
+        {**dict(row), "mock": True}
+        if row
+        else {"error": "order_not_found", "message": "订单不存在或无权访问"}
+    )
 
 
-def apply_refund(user_id: str, order_id: str, reason: str, idempotency_key: str, session_id: str = "", application_type: str | None = None) -> dict:
+def apply_refund(
+    user_id: str,
+    order_id: str,
+    reason: str,
+    idempotency_key: str,
+    session_id: str = "",
+    application_type: str | None = None,
+) -> dict:
     reason = reason.strip()
     idempotency_key = idempotency_key.strip()
     if not reason or len(reason) > 500:
         return {"error": "invalid_reason", "message": "请填写不超过 500 字的退款原因"}
     if not idempotency_key or len(idempotency_key) > 128:
-        return {"error": "invalid_idempotency_key", "message": "请提供不超过 128 字的幂等键"}
+        return {
+            "error": "invalid_idempotency_key",
+            "message": "请提供不超过 128 字的幂等键",
+        }
     if application_type not in (None, "no_reason", "quality_issue"):
         return {"error": "invalid_application_type", "message": "不支持的售后类型"}
     db = _connect()
     try:
         db.execute("BEGIN IMMEDIATE")
-        order = db.execute("SELECT * FROM orders WHERE id = ? AND user_id = ?", (order_id, user_id)).fetchone()
+        order = db.execute(
+            "SELECT * FROM orders WHERE id = ? AND user_id = ?", (order_id, user_id)
+        ).fetchone()
         if not order:
             return {"error": "order_not_found", "message": "订单不存在或无权访问"}
         previous = db.execute(
@@ -182,59 +236,129 @@ def apply_refund(user_id: str, order_id: str, reason: str, idempotency_key: str,
             (user_id, idempotency_key),
         ).fetchone()
         if previous:
-            if previous["order_id"] != order_id or previous["reason"] != reason or previous["application_type"] != application_type:
-                return {"error": "idempotency_conflict", "message": "该幂等键已用于其他请求"}
+            if (
+                previous["order_id"] != order_id
+                or previous["reason"] != reason
+                or previous["application_type"] != application_type
+            ):
+                return {
+                    "error": "idempotency_conflict",
+                    "message": "该幂等键已用于其他请求",
+                }
             saved = db.execute(
                 "SELECT r.id, r.order_id, r.reason, r.status, r.session_id, r.created_at, r.application_type, r.policy_action, r.policy_reason, r.policy_ref, t.id AS ticket_id FROM refund_requests r LEFT JOIN refund_tickets t ON t.refund_id = r.id WHERE r.id = ? AND r.user_id = ?",
                 (previous["refund_id"], user_id),
             ).fetchone()
             return {**dict(saved), "reused": True, "mock": True}
-        existing = db.execute("SELECT r.id, r.order_id, r.reason, r.status, r.session_id, r.created_at, r.application_type, r.policy_action, r.policy_reason, r.policy_ref, t.id AS ticket_id FROM refund_requests r LEFT JOIN refund_tickets t ON t.refund_id = r.id WHERE r.order_id = ? AND r.user_id = ? AND r.status IN ('pending_review', 'approved', 'completed')", (order_id, user_id)).fetchone()
+        existing = db.execute(
+            "SELECT r.id, r.order_id, r.reason, r.status, r.session_id, r.created_at, r.application_type, r.policy_action, r.policy_reason, r.policy_ref, t.id AS ticket_id FROM refund_requests r LEFT JOIN refund_tickets t ON t.refund_id = r.id WHERE r.order_id = ? AND r.user_id = ? AND r.status IN ('pending_review', 'approved', 'completed')",
+            (order_id, user_id),
+        ).fetchone()
         if existing:
             if existing["status"] != "pending_review":
-                return {"error": "already_approved", "message": "该订单已有通过审核的退款申请"}
-            if existing["reason"] != reason or existing["application_type"] != application_type:
-                return {"error": "refund_exists", "message": "该订单已有退款申请，请查看原申请"}
-            db.execute("INSERT INTO refund_idempotency VALUES (?, ?, ?, ?, ?)",
-                       (user_id, idempotency_key, order_id, reason, existing["id"]))
+                return {
+                    "error": "already_approved",
+                    "message": "该订单已有通过审核的退款申请",
+                }
+            if (
+                existing["reason"] != reason
+                or existing["application_type"] != application_type
+            ):
+                return {
+                    "error": "refund_exists",
+                    "message": "该订单已有退款申请，请查看原申请",
+                }
+            db.execute(
+                "INSERT INTO refund_idempotency VALUES (?, ?, ?, ?, ?)",
+                (user_id, idempotency_key, order_id, reason, existing["id"]),
+            )
             db.commit()
             return {**dict(existing), "reused": True, "mock": True}
-        if session_id and db.execute(
-            "SELECT 1 FROM refund_requests WHERE session_id = ? AND status = 'pending_review'",
-            (session_id,),
-        ).fetchone():
+        if (
+            session_id
+            and db.execute(
+                "SELECT 1 FROM refund_requests WHERE session_id = ? AND status = 'pending_review'",
+                (session_id,),
+            ).fetchone()
+        ):
             return {"error": "session_busy", "message": "该会话已有等待人工审核的申请"}
         if order["status"] != "delivered":
-            return {"error": "not_eligible", "message": "演示规则：只有已签收订单可以申请退款"}
+            return {
+                "error": "not_eligible",
+                "message": "演示规则：只有已签收订单可以申请退款",
+            }
         try:
-            signed_at = datetime.fromisoformat(order["delivered_at"]) if order["delivered_at"] else None
+            signed_at = (
+                datetime.fromisoformat(order["delivered_at"])
+                if order["delivered_at"]
+                else None
+            )
         except (ValueError, TypeError):
             signed_at = None
         decision = evaluate(application_type, order["product_type"], signed_at, _now())
         if decision.action == "reject":
-            return {"error": "not_eligible", "message": decision.reason, "policy_ref": decision.policy_ref}
+            return {
+                "error": "not_eligible",
+                "message": decision.reason,
+                "policy_ref": decision.policy_ref,
+            }
         refund_id = "RF-" + uuid.uuid4().hex.upper()
         created = _now().isoformat()
-        db.execute("INSERT INTO refund_requests (id, order_id, user_id, reason, status, created_at, session_id, application_type, policy_action, policy_reason, policy_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                   (refund_id, order_id, user_id, reason, "pending_review", created, session_id, application_type, decision.action, decision.reason, decision.policy_ref))
+        db.execute(
+            "INSERT INTO refund_requests (id, order_id, user_id, reason, status, created_at, session_id, application_type, policy_action, policy_reason, policy_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                refund_id,
+                order_id,
+                user_id,
+                reason,
+                "pending_review",
+                created,
+                session_id,
+                application_type,
+                decision.action,
+                decision.reason,
+                decision.policy_ref,
+            ),
+        )
         ticket_id = "TK-" + uuid.uuid4().hex.upper()
-        db.execute("INSERT INTO refund_tickets VALUES (?, ?, ?, ?, ?)",
-                   (ticket_id, refund_id, user_id, "pending", created))
-        db.execute("INSERT INTO refund_idempotency VALUES (?, ?, ?, ?, ?)",
-                   (user_id, idempotency_key, order_id, reason, refund_id))
-        db.execute("INSERT INTO after_sales_audit (created_at, action, actor_id, refund_id, order_id) VALUES (?, 'refund_requested', ?, ?, ?)",
-                   (created, user_id, refund_id, order_id))
+        db.execute(
+            "INSERT INTO refund_tickets VALUES (?, ?, ?, ?, ?)",
+            (ticket_id, refund_id, user_id, "pending", created),
+        )
+        db.execute(
+            "INSERT INTO refund_idempotency VALUES (?, ?, ?, ?, ?)",
+            (user_id, idempotency_key, order_id, reason, refund_id),
+        )
+        db.execute(
+            "INSERT INTO after_sales_audit (created_at, action, actor_id, refund_id, order_id) VALUES (?, 'refund_requested', ?, ?, ?)",
+            (created, user_id, refund_id, order_id),
+        )
         db.commit()
-        return {"id": refund_id, "order_id": order_id, "reason": reason, "session_id": session_id,
-                "ticket_id": ticket_id, "status": "pending_review", "created_at": created, "reused": False, "mock": True,
-                "application_type": application_type, "policy_action": decision.action, "policy_reason": decision.reason, "policy_ref": decision.policy_ref}
+        return {
+            "id": refund_id,
+            "order_id": order_id,
+            "reason": reason,
+            "session_id": session_id,
+            "ticket_id": ticket_id,
+            "status": "pending_review",
+            "created_at": created,
+            "reused": False,
+            "mock": True,
+            "application_type": application_type,
+            "policy_action": decision.action,
+            "policy_reason": decision.reason,
+            "policy_ref": decision.policy_ref,
+        }
     finally:
         db.close()
 
 
 def list_refunds(user_id: str) -> list[dict]:
     with closing(_connect()) as db:
-        rows = db.execute("SELECT r.id, r.order_id, r.reason, r.status, r.session_id, r.created_at, t.id AS ticket_id, t.status AS ticket_status, (SELECT note FROM workbench_actions a WHERE a.refund_id = r.id AND a.action = 'need_info' ORDER BY a.id DESC LIMIT 1) AS requested_info, (SELECT status FROM handoff_outbox h WHERE h.refund_id = r.id ORDER BY h.id DESC LIMIT 1) AS resume_status FROM refund_requests r LEFT JOIN refund_tickets t ON t.refund_id = r.id WHERE r.user_id = ? ORDER BY r.created_at DESC", (user_id,)).fetchall()
+        rows = db.execute(
+            "SELECT r.id, r.order_id, r.reason, r.status, r.session_id, r.created_at, t.id AS ticket_id, t.status AS ticket_status, (SELECT note FROM workbench_actions a WHERE a.refund_id = r.id AND a.action = 'need_info' ORDER BY a.id DESC LIMIT 1) AS requested_info, (SELECT status FROM handoff_outbox h WHERE h.refund_id = r.id ORDER BY h.id DESC LIMIT 1) AS resume_status FROM refund_requests r LEFT JOIN refund_tickets t ON t.refund_id = r.id WHERE r.user_id = ? ORDER BY r.created_at DESC",
+            (user_id,),
+        ).fetchall()
     return [{**dict(row), "mock": True} for row in rows]
 
 
@@ -268,8 +392,10 @@ def cancel_refund(user_id: str, refund_id: str) -> dict:
                 "INSERT OR IGNORE INTO handoff_outbox (refund_id, session_id, user_id, action, created_at) VALUES (?, ?, ?, 'cancel', ?)",
                 (refund_id, refund["session_id"], user_id, _now().isoformat()),
             )
-        db.execute("INSERT INTO after_sales_audit (created_at, action, actor_id, refund_id, order_id) VALUES (?, 'refund_cancelled', ?, ?, ?)",
-                   (_now().isoformat(), user_id, refund_id, refund["order_id"]))
+        db.execute(
+            "INSERT INTO after_sales_audit (created_at, action, actor_id, refund_id, order_id) VALUES (?, 'refund_cancelled', ?, ?, ?)",
+            (_now().isoformat(), user_id, refund_id, refund["order_id"]),
+        )
         db.commit()
         return {**dict(refund), "status": "cancelled", "reused": False, "mock": True}
     finally:
@@ -300,7 +426,9 @@ def list_refund_reviews() -> list[dict]:
             ORDER BY r.created_at DESC
             """
         ).fetchall()
-    return _enrich_usernames([{**dict(row), "mock": True} for row in rows], "user_id", "username")
+    return _enrich_usernames(
+        [{**dict(row), "mock": True} for row in rows], "user_id", "username"
+    )
 
 
 def admin_refunds(limit: int, offset: int, status: str = "") -> list[dict]:
@@ -319,14 +447,21 @@ def admin_refunds(limit: int, offset: int, status: str = "") -> list[dict]:
 def admin_refund_counts() -> dict:
     """管理员概览：退款状态分布、待处理/失败工单与等待恢复事件。"""
     with closing(_connect()) as db:
-        counts = {row["status"]: row["n"] for row in db.execute(
-            "SELECT status, COUNT(*) AS n FROM refund_requests GROUP BY status"
-        )}
-        waiting_info = db.execute("SELECT COUNT(*) FROM refund_tickets WHERE status = 'processing'").fetchone()[0]
+        counts = {
+            row["status"]: row["n"]
+            for row in db.execute(
+                "SELECT status, COUNT(*) AS n FROM refund_requests GROUP BY status"
+            )
+        }
+        waiting_info = db.execute(
+            "SELECT COUNT(*) FROM refund_tickets WHERE status = 'processing'"
+        ).fetchone()[0]
         pending_tickets = db.execute(
             "SELECT COUNT(*) FROM refund_tickets WHERE status IN ('pending', 'processing')"
         ).fetchone()[0]
-        pending_resume = db.execute("SELECT COUNT(*) FROM handoff_outbox WHERE status != 'done'").fetchone()[0]
+        pending_resume = db.execute(
+            "SELECT COUNT(*) FROM handoff_outbox WHERE status != 'done'"
+        ).fetchone()[0]
         # 失败工单：恢复流程失败过、且仍未完成的工单（可在客服工作台重试）。
         failed_tickets = db.execute(
             "SELECT COUNT(DISTINCT refund_id) FROM handoff_outbox WHERE failure_count > 0 AND status != 'done'"
@@ -348,7 +483,8 @@ def admin_business_events(limit: int, offset: int = 0) -> list[dict]:
                    UNION ALL
                    SELECT a.created_at, a.action, a.operator_id AS actor_id, a.refund_id, r.order_id
                    FROM workbench_actions a JOIN refund_requests r ON r.id = a.refund_id
-               ) ORDER BY created_at DESC LIMIT ? OFFSET ?""", (limit, offset),
+               ) ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+            (limit, offset),
         ).fetchall()
     return [{**dict(row), "kind": "business", "outcome": "success"} for row in rows]
 
@@ -423,8 +559,10 @@ def provide_refund_information(user_id: str, refund_id: str, content: str) -> di
             "INSERT INTO refund_customer_updates (refund_id, user_id, content, created_at) VALUES (?, ?, ?, ?)",
             (refund_id, user_id, content, _now().isoformat()),
         )
-        db.execute("INSERT INTO after_sales_audit (created_at, action, actor_id, refund_id, order_id) VALUES (?, 'information_submitted', ?, ?, ?)",
-                   (_now().isoformat(), user_id, refund_id, refund["order_id"]))
+        db.execute(
+            "INSERT INTO after_sales_audit (created_at, action, actor_id, refund_id, order_id) VALUES (?, 'information_submitted', ?, ?, ?)",
+            (_now().isoformat(), user_id, refund_id, refund["order_id"]),
+        )
         db.commit()
         return {"id": refund_id, "status": "pending_review", "ticket_status": "pending"}
     finally:
@@ -436,17 +574,25 @@ def claim_handoff(refund_id: str) -> dict | None:
     db = _connect()
     try:
         db.execute("BEGIN IMMEDIATE")
-        row = db.execute("SELECT * FROM handoff_outbox WHERE refund_id = ? ORDER BY id DESC LIMIT 1", (refund_id,)).fetchone()
+        row = db.execute(
+            "SELECT * FROM handoff_outbox WHERE refund_id = ? ORDER BY id DESC LIMIT 1",
+            (refund_id,),
+        ).fetchone()
         if not row:
             return None
         event = dict(row)
         if event["status"] == "done":
             return event
         if event["status"] == "running" and event["claimed_at"]:
-            if _now() - datetime.fromisoformat(event["claimed_at"]) < timedelta(minutes=5):
+            if _now() - datetime.fromisoformat(event["claimed_at"]) < timedelta(
+                minutes=5
+            ):
                 return {**event, "error": "resume_in_progress"}
         token = _now().isoformat()
-        db.execute("UPDATE handoff_outbox SET status = 'running', claimed_at = ? WHERE id = ?", (token, event["id"]))
+        db.execute(
+            "UPDATE handoff_outbox SET status = 'running', claimed_at = ? WHERE id = ?",
+            (token, event["id"]),
+        )
         db.commit()
         return {**event, "status": "running", "claimed_at": token}
     finally:
@@ -464,18 +610,24 @@ def get_handoff(refund_id: str) -> dict | None:
 
 def has_pending_handoff(session_id: str, user_id: str) -> bool:
     with closing(_connect()) as db:
-        return db.execute(
-            "SELECT 1 FROM handoff_outbox WHERE session_id = ? AND user_id = ? AND status != 'done' LIMIT 1",
-            (session_id, user_id),
-        ).fetchone() is not None
+        return (
+            db.execute(
+                "SELECT 1 FROM handoff_outbox WHERE session_id = ? AND user_id = ? AND status != 'done' LIMIT 1",
+                (session_id, user_id),
+            ).fetchone()
+            is not None
+        )
 
 
 def has_pending_refund(session_id: str, user_id: str) -> bool:
     with closing(_connect()) as db:
-        return db.execute(
-            "SELECT 1 FROM refund_requests WHERE session_id = ? AND user_id = ? AND status = 'pending_review' LIMIT 1",
-            (session_id, user_id),
-        ).fetchone() is not None
+        return (
+            db.execute(
+                "SELECT 1 FROM refund_requests WHERE session_id = ? AND user_id = ? AND status = 'pending_review' LIMIT 1",
+                (session_id, user_id),
+            ).fetchone()
+            is not None
+        )
 
 
 def finish_handoff(event_id: int, token: str, response: str) -> bool:
@@ -499,7 +651,10 @@ def release_handoff(event_id: int, token: str) -> None:
 
 def handoff_status(refund_id: str) -> str | None:
     with closing(_connect()) as db:
-        row = db.execute("SELECT status FROM handoff_outbox WHERE refund_id = ? ORDER BY id DESC LIMIT 1", (refund_id,)).fetchone()
+        row = db.execute(
+            "SELECT status FROM handoff_outbox WHERE refund_id = ? ORDER BY id DESC LIMIT 1",
+            (refund_id,),
+        ).fetchone()
     return row["status"] if row else None
 
 
@@ -513,12 +668,30 @@ def list_handoff_messages(session_id: str, user_id: str) -> list[dict]:
             "SELECT a.id, a.note, a.created_at FROM workbench_actions a JOIN refund_requests r ON r.id = a.refund_id WHERE r.session_id = ? AND r.user_id = ? AND a.action = 'need_info' ORDER BY a.id",
             (session_id, user_id),
         ).fetchall()
-    notices = [{"role": "assistant", "content": row["response"], "timestamp": row["created_at"], "handoff_id": row["id"]} for row in rows]
-    notices.extend({"role": "assistant", "content": f"客服需要您补充信息：{row['note']}。请在订单售后页面提交。", "timestamp": row["created_at"], "question_id": row["id"]} for row in questions)
+    notices = [
+        {
+            "role": "assistant",
+            "content": row["response"],
+            "timestamp": row["created_at"],
+            "handoff_id": row["id"],
+        }
+        for row in rows
+    ]
+    notices.extend(
+        {
+            "role": "assistant",
+            "content": f"客服需要您补充信息：{row['note']}。请在订单售后页面提交。",
+            "timestamp": row["created_at"],
+            "question_id": row["id"],
+        }
+        for row in questions
+    )
     return notices
 
 
-def record_refund_decision(refund_id: str, action: str, note: str, operator_id: str, operator_name: str = "") -> dict:
+def record_refund_decision(
+    refund_id: str, action: str, note: str, operator_id: str, operator_name: str = ""
+) -> dict:
     """人工决定：批准 / 拒绝 / 需补充信息，联动工单状态并写审计。
 
     事务内完成退款单与工单流转；need_info 保持 pending_review
@@ -551,21 +724,47 @@ def record_refund_decision(refund_id: str, action: str, note: str, operator_id: 
                 (refund_id,),
             ).fetchone()
             if last and last["action"] == action and last["note"] == note.strip()[:500]:
-                return {**dict(refund), "action_id": last["id"], "reused": True, "mock": True}
-            return {"error": "invalid_state", "message": f"当前状态（{refund['status']}）无法审批"}
+                return {
+                    **dict(refund),
+                    "action_id": last["id"],
+                    "reused": True,
+                    "mock": True,
+                }
+            return {
+                "error": "invalid_state",
+                "message": f"当前状态（{refund['status']}）无法审批",
+            }
 
         ticket_status = db.execute(
-            "SELECT status FROM refund_tickets WHERE refund_id = ?", (refund_id,),
+            "SELECT status FROM refund_tickets WHERE refund_id = ?",
+            (refund_id,),
         ).fetchone()
-        if ticket_status and ticket_status["status"] == "processing" and action == "need_info":
+        if (
+            ticket_status
+            and ticket_status["status"] == "processing"
+            and action == "need_info"
+        ):
             last = db.execute(
                 "SELECT id, operator_id, action, note FROM workbench_actions WHERE refund_id = ? ORDER BY id DESC LIMIT 1",
                 (refund_id,),
             ).fetchone()
-            if last and last["action"] == action and last["operator_id"] == operator_id and last["note"] == note.strip()[:500]:
-                return {**dict(refund), "action_id": last["id"], "reused": True, "mock": True}
+            if (
+                last
+                and last["action"] == action
+                and last["operator_id"] == operator_id
+                and last["note"] == note.strip()[:500]
+            ):
+                return {
+                    **dict(refund),
+                    "action_id": last["id"],
+                    "reused": True,
+                    "mock": True,
+                }
         if not ticket_status or ticket_status["status"] != "pending":
-            return {"error": "invalid_state", "message": "正在等待用户补充信息或工单状态无效"}
+            return {
+                "error": "invalid_state",
+                "message": "正在等待用户补充信息或工单状态无效",
+            }
 
         if action == "need_info":
             ticket = db.execute(
@@ -576,10 +775,21 @@ def record_refund_decision(refund_id: str, action: str, note: str, operator_id: 
                 return {"error": "invalid_state", "message": "正在等待用户补充信息"}
             db.execute(
                 "INSERT INTO workbench_actions (refund_id, operator_id, action, note, created_at) VALUES (?, ?, ?, ?, ?)",
-                (refund_id, operator_id, action, note.strip()[:500], _now().isoformat()),
+                (
+                    refund_id,
+                    operator_id,
+                    action,
+                    note.strip()[:500],
+                    _now().isoformat(),
+                ),
             )
             db.commit()
-            return {**dict(refund), "status": "pending_review", "reused": False, "mock": True}
+            return {
+                **dict(refund),
+                "status": "pending_review",
+                "reused": False,
+                "mock": True,
+            }
 
         updated = db.execute(
             "UPDATE refund_requests SET status = ? WHERE id = ? AND status = 'pending_review'",
@@ -598,10 +808,24 @@ def record_refund_decision(refund_id: str, action: str, note: str, operator_id: 
         if refund["session_id"]:
             db.execute(
                 "INSERT INTO handoff_outbox (refund_id, action_id, session_id, user_id, action, note, operator, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (refund_id, action_row.lastrowid, refund["session_id"], refund["user_id"], action,
-                 note.strip()[:500], operator_name or operator_id, _now().isoformat()),
+                (
+                    refund_id,
+                    action_row.lastrowid,
+                    refund["session_id"],
+                    refund["user_id"],
+                    action,
+                    note.strip()[:500],
+                    operator_name or operator_id,
+                    _now().isoformat(),
+                ),
             )
         db.commit()
-        return {**dict(refund), "status": new_refund_status, "action_id": action_row.lastrowid, "reused": False, "mock": True}
+        return {
+            **dict(refund),
+            "status": new_refund_status,
+            "action_id": action_row.lastrowid,
+            "reused": False,
+            "mock": True,
+        }
     finally:
         db.close()

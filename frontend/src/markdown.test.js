@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { escapeHtml, renderSafeMarkdown } from "./markdown.js";
 
 test("raw HTML is escaped, never rendered", () => {
-  const out = renderSafeMarkdown('<img src=x onerror=alert(1)>');
+  const out = renderSafeMarkdown("<img src=x onerror=alert(1)>");
   assert.equal(out.includes("<img"), false);
   assert.ok(out.includes("&lt;img"));
 });
@@ -18,7 +18,9 @@ test("script tags are escaped", () => {
 });
 
 test("event handlers and javascript: urls stay inert text", () => {
-  const out = renderSafeMarkdown('点击 [链接](javascript:alert(1)) 和 <a href="javascript:alert(1)">x</a>');
+  const out = renderSafeMarkdown(
+    '点击 [链接](javascript:alert(1)) 和 <a href="javascript:alert(1)">x</a>',
+  );
   assert.equal(out.includes("<a "), false);
   assert.ok(out.includes("&lt;a href="));
 });

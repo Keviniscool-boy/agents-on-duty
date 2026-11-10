@@ -44,8 +44,12 @@ def test_role_change_rolls_back_when_audit_fails(isolated):
 
 
 def test_refund_audit_idempotency_and_privacy(isolated):
-    order = next(o for o in after_sales.list_orders("customer") if o["status"] == "delivered")
-    first = after_sales.apply_refund("customer", order["order_id"], "private reason", "key")
+    order = next(
+        o for o in after_sales.list_orders("customer") if o["status"] == "delivered"
+    )
+    first = after_sales.apply_refund(
+        "customer", order["order_id"], "private reason", "key"
+    )
     after_sales.apply_refund("customer", order["order_id"], "private reason", "key")
     assert after_sales.cancel_refund("other", first["id"])["error"]
     after_sales.cancel_refund("customer", first["id"])
@@ -58,6 +62,7 @@ def test_runtime_trace_persists_only_metadata(isolated):
     @trace_agent_call("test_node")
     async def node():
         return {"compliance_passed": False, "compliance_reason": "private content"}
+
     with trace_scope("trace-1", "actor", "session"):
         asyncio.run(node())
     events = list_events(10, trace_id="trace-1")
@@ -71,7 +76,10 @@ def test_chat_and_stream_create_trace_records(isolated, monkeypatch):
 
     @trace_agent_call("compliance_process")
     async def node():
-        return {"compliance_passed": True, "sub_results": {"compliance": {"risk_level": "low"}}}
+        return {
+            "compliance_passed": True,
+            "sub_results": {"compliance": {"risk_level": "low"}},
+        }
 
     class Graph:
         async def ainvoke(self, state, config):
@@ -85,18 +93,36 @@ def test_chat_and_stream_create_trace_records(isolated, monkeypatch):
         return request.session_id, {}, {}
 
     async def finalize(*args):
-        return api_main.ChatResponse(session_id=args[0], response="ok", intent="test", current_agent="fallback", compliance_passed=True, compliance_reason="")
+        return api_main.ChatResponse(
+            session_id=args[0],
+            response="ok",
+            intent="test",
+            current_agent="fallback",
+            compliance_passed=True,
+            compliance_reason="",
+        )
 
     monkeypatch.setattr(api_main, "graph", Graph())
     monkeypatch.setattr(api_main, "_prepare_chat", prepare)
     monkeypatch.setattr(api_main, "_finalize_chat", finalize)
     monkeypatch.setattr(api_main, "claim_session_turn", lambda *args: True)
     monkeypatch.setattr(api_main, "release_session_turn", lambda *args: None)
-    api_main.app.dependency_overrides[get_current_user] = lambda: {"id": "actor", "username": "user", "role": "user"}
+    api_main.app.dependency_overrides[get_current_user] = lambda: {
+        "id": "actor",
+        "username": "user",
+        "role": "user",
+    }
     try:
         client = TestClient(api_main.app)
-        assert client.post("/api/chat", json={"message": "secret", "session_id": "sync"}).status_code == 200
-        response = client.post("/api/chat/stream", json={"message": "secret", "session_id": "stream"})
+        assert (
+            client.post(
+                "/api/chat", json={"message": "secret", "session_id": "sync"}
+            ).status_code
+            == 200
+        )
+        response = client.post(
+            "/api/chat/stream", json={"message": "secret", "session_id": "stream"}
+        )
         assert response.status_code == 200 and '"event": "final"' in response.text
         events = list_events(10, kind="compliance")
         assert {e["session_id"] for e in events} == {"sync", "stream"}
@@ -106,18 +132,35 @@ def test_chat_and_stream_create_trace_records(isolated, monkeypatch):
         api_main.app.dependency_overrides.pop(get_current_user, None)
 
 
-@pytest.mark.parametrize("role,expected", [("user", 403), ("agent", 403), ("admin", 200)])
+@pytest.mark.parametrize(
+    "role,expected", [("user", 403), ("agent", 403), ("admin", 200)]
+)
 def test_admin_routes_require_admin(isolated, role, expected):
     from api.main import app
-    app.dependency_overrides[get_current_user] = lambda: {"id": isolated[0]["id"], "username": "admin", "role": role}
+
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": isolated[0]["id"],
+        "username": "admin",
+        "role": role,
+    }
     try:
         client = TestClient(app)
         for path in ("users", "overview", "refunds", "runs", "runs/trace-1", "audit"):
             assert client.get(f"/api/admin/{path}").status_code == expected
-        assert client.post("/api/admin/users/role", json={"username": "user", "role": "agent"}).status_code == expected
+        assert (
+            client.post(
+                "/api/admin/users/role", json={"username": "user", "role": "agent"}
+            ).status_code
+            == expected
+        )
         if role == "admin":
             assert client.get("/api/admin/users?limit=101").status_code == 422
-            assert client.post("/api/admin/users/role", json={"username": "admin", "role": "user"}).status_code == 409
+            assert (
+                client.post(
+                    "/api/admin/users/role", json={"username": "admin", "role": "user"}
+                ).status_code
+                == 409
+            )
     finally:
         app.dependency_overrides.pop(get_current_user, None)
 
@@ -131,7 +174,9 @@ def test_user_role_filter_and_counts(isolated):
 
 
 def test_overview_pending_and_failed_stats(isolated):
-    order = next(o for o in after_sales.list_orders("customer") if o["status"] == "delivered")
+    order = next(
+        o for o in after_sales.list_orders("customer") if o["status"] == "delivered"
+    )
     refund = after_sales.apply_refund("customer", order["order_id"], "reason", "k1")
     with after_sales._connect() as db:
         db.execute(
@@ -149,9 +194,15 @@ def test_overview_pending_and_failed_stats(isolated):
 def test_compliance_violation_codes_are_content_free():
     from tracing.otel_config import compliance_violation_codes
 
-    assert compliance_violation_codes(["forbidden term detected: guaranteed profit"]) == ["forbidden_term"]
-    assert compliance_violation_codes(["private information detected: phone"]) == ["pii"]
-    assert compliance_violation_codes(["compliance model returned invalid JSON"]) == ["invalid_model_output"]
+    assert compliance_violation_codes(
+        ["forbidden term detected: guaranteed profit"]
+    ) == ["forbidden_term"]
+    assert compliance_violation_codes(["private information detected: phone"]) == [
+        "pii"
+    ]
+    assert compliance_violation_codes(["compliance model returned invalid JSON"]) == [
+        "invalid_model_output"
+    ]
     assert compliance_violation_codes(["some llm reason"]) == ["llm_violation"]
     assert compliance_violation_codes([]) == []
 
@@ -161,7 +212,9 @@ def test_compliance_codes_recorded_from_result(isolated):
 
     @trace_agent_call("compliance_rule_check")
     async def node():
-        return ComplianceResult(passed=False, risk_level="medium", violations=["forbidden term detected: x"])
+        return ComplianceResult(
+            passed=False, risk_level="medium", violations=["forbidden term detected: x"]
+        )
 
     with trace_scope("trace-codes", "actor", "session"):
         asyncio.run(node())
@@ -172,16 +225,24 @@ def test_compliance_codes_recorded_from_result(isolated):
 def test_admin_audit_kind_filter(isolated):
     from api.main import app
 
-    app.dependency_overrides[get_current_user] = lambda: {"id": isolated[0]["id"], "username": "admin", "role": "admin"}
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": isolated[0]["id"],
+        "username": "admin",
+        "role": "admin",
+    }
     try:
         client = TestClient(app)
-        order = next(o for o in after_sales.list_orders("customer") if o["status"] == "delivered")
+        order = next(
+            o for o in after_sales.list_orders("customer") if o["status"] == "delivered"
+        )
         after_sales.apply_refund("customer", order["order_id"], "reason", "k-audit")
         database.set_user_role("user", "agent", actor_id=isolated[0]["id"])
         role_events = client.get("/api/admin/audit?kind=role").json()["events"]
         assert role_events and all(event["kind"] == "role" for event in role_events)
         business_events = client.get("/api/admin/audit?kind=business").json()["events"]
-        assert business_events and all(event["kind"] == "business" for event in business_events)
+        assert business_events and all(
+            event["kind"] == "business" for event in business_events
+        )
         all_events = client.get("/api/admin/audit").json()["events"]
         assert {"role", "business"} <= {event["kind"] for event in all_events}
     finally:

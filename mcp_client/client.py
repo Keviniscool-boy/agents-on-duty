@@ -35,10 +35,8 @@ class MCPClient:
             env=env,
         )
 
-        read_stream, write_stream = (
-            await self._exit_stack.enter_async_context(
-                stdio_client(server_params)
-            )
+        read_stream, write_stream = await self._exit_stack.enter_async_context(
+            stdio_client(server_params)
         )
 
         self.session = await self._exit_stack.enter_async_context(

@@ -76,7 +76,9 @@ class SubprocessPiRunner:
         if payload is None:
             return RunnerResult(
                 latency_ms=latency_ms,
-                error=(completed.stderr or completed.stdout or "invalid JSON output").strip()[:500],
+                error=(
+                    completed.stderr or completed.stdout or "invalid JSON output"
+                ).strip()[:500],
             )
         cost_known = bool(payload.get("cost_known", False))
         return RunnerResult(
@@ -121,10 +123,12 @@ class LangGraphRagRunner:
         started = time.perf_counter()
         try:
             result = asyncio.run(
-                self.agent.process({
-                    "messages": [self._HumanMessage(content=question)],
-                    "sub_results": {},
-                })
+                self.agent.process(
+                    {
+                        "messages": [self._HumanMessage(content=question)],
+                        "sub_results": {},
+                    }
+                )
             )
         except Exception as exc:  # noqa: BLE001 - reported as a failure result
             return RunnerResult(
@@ -141,7 +145,11 @@ class LangGraphRagRunner:
 
 def load_cases(limit: int | None = None) -> list[dict]:
     path = EVALUATION_DIR / "rag_cases.jsonl"
-    cases = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    cases = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     return cases[:limit] if limit else cases
 
 
@@ -157,20 +165,22 @@ def evaluate_runners(cases: list[dict], rag_runner, pi_runner) -> list[dict]:
         pi = pi_runner.run(case["question"])
         rag_metrics = score_case(case, rag.sources, rag.answer, {})
         pi_metrics = score_case(case, pi.sources, pi.answer, {})
-        results.append({
-            "id": case["id"],
-            "question": case["question"],
-            "rag": {
-                **rag.__dict__,
-                **rag_metrics,
-                "answer_correct": _answer_correct(case, rag.answer),
-            },
-            "pi": {
-                **pi.__dict__,
-                **pi_metrics,
-                "answer_correct": _answer_correct(case, pi.answer),
-            },
-        })
+        results.append(
+            {
+                "id": case["id"],
+                "question": case["question"],
+                "rag": {
+                    **rag.__dict__,
+                    **rag_metrics,
+                    "answer_correct": _answer_correct(case, rag.answer),
+                },
+                "pi": {
+                    **pi.__dict__,
+                    **pi_metrics,
+                    "answer_correct": _answer_correct(case, pi.answer),
+                },
+            }
+        )
     return results
 
 
@@ -189,11 +199,21 @@ def _side_summary(results: list[dict], side: str) -> dict:
     cost_known = bool(rows) and len(known_costs) == len(rows)
     return {
         "valid_cases": len(valid_rows),
-        "answer_accuracy": round(sum(1 for row in valid_rows if row["answer_correct"]) / valid_total, 4),
-        "citation_accuracy": round(sum(1 for row in valid_rows if row.get("citation_correct")) / valid_total, 4),
-        "citation_full_accuracy": round(sum(1 for row in valid_rows if row.get("citation_full")) / valid_total, 4),
-        "refusal_accuracy": round(sum(1 for row in valid_rows if row.get("refusal_correct")) / valid_total, 4),
-        "median_latency_ms": round(median([row["latency_ms"] for row in valid_rows]) if valid_rows else 0.0, 2),
+        "answer_accuracy": round(
+            sum(1 for row in valid_rows if row["answer_correct"]) / valid_total, 4
+        ),
+        "citation_accuracy": round(
+            sum(1 for row in valid_rows if row.get("citation_correct")) / valid_total, 4
+        ),
+        "citation_full_accuracy": round(
+            sum(1 for row in valid_rows if row.get("citation_full")) / valid_total, 4
+        ),
+        "refusal_accuracy": round(
+            sum(1 for row in valid_rows if row.get("refusal_correct")) / valid_total, 4
+        ),
+        "median_latency_ms": round(
+            median([row["latency_ms"] for row in valid_rows]) if valid_rows else 0.0, 2
+        ),
         "cost_usd": round(sum(known_costs), 6) if cost_known else None,
         "cost_known": cost_known,
         "cost_unknown_cases": len(rows) - len(known_costs),
@@ -249,15 +269,21 @@ def summarize(results: list[dict]) -> dict:
     pi = _side_summary(results, "pi")
     cost_delta = (
         round(pi["cost_usd"] - rag["cost_usd"], 6)
-        if pi.get("cost_known") and rag.get("cost_known")
-        and pi.get("cost_usd") is not None and rag.get("cost_usd") is not None
+        if pi.get("cost_known")
+        and rag.get("cost_known")
+        and pi.get("cost_usd") is not None
+        and rag.get("cost_usd") is not None
         else None
     )
     comparison = {
         "answer_delta": round(pi["answer_accuracy"] - rag["answer_accuracy"], 4),
         "citation_delta": round(pi["citation_accuracy"] - rag["citation_accuracy"], 4),
-        "citation_full_delta": round(pi["citation_full_accuracy"] - rag["citation_full_accuracy"], 4),
-        "latency_delta_ms": round(pi["median_latency_ms"] - rag["median_latency_ms"], 2),
+        "citation_full_delta": round(
+            pi["citation_full_accuracy"] - rag["citation_full_accuracy"], 4
+        ),
+        "latency_delta_ms": round(
+            pi["median_latency_ms"] - rag["median_latency_ms"], 2
+        ),
         "cost_delta_usd": cost_delta,
         "failure_delta": round(pi["failure_rate"] - rag["failure_rate"], 4),
     }

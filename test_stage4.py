@@ -42,8 +42,13 @@ class GoodMemory:
         return [{"source": "POL-X v1 §a", "content": "strong", "score": 0.9}]
 
 
-def _policy(doc_id: str, version: str = "1.0", status: str = "published",
-            body: str = "body", extra: str = "") -> str:
+def _policy(
+    doc_id: str,
+    version: str = "1.0",
+    status: str = "published",
+    body: str = "body",
+    extra: str = "",
+) -> str:
     return (
         "---\n"
         f"doc_id: {doc_id}\n"
@@ -73,10 +78,14 @@ def test_hybrid_retrieval_adds_keyword_only_hit(tmp_path):
 
 def test_knowledge_rag_refuses_without_results():
     agent = KnowledgeRAGAgent(FakeLLM(["query"]), EmptyMemory())
-    result = asyncio.run(agent.process({
-        "messages": [HumanMessage(content="退款政策是什么")],
-        "sub_results": {},
-    }))
+    result = asyncio.run(
+        agent.process(
+            {
+                "messages": [HumanMessage(content="退款政策是什么")],
+                "sub_results": {},
+            }
+        )
+    )
     assert result["sub_results"]["knowledge_decision"] == "refuse"
     assert result["sub_results"]["handoff_required"] is True
     assert "没有相关信息" in result["final_response"]
@@ -84,10 +93,14 @@ def test_knowledge_rag_refuses_without_results():
 
 def test_knowledge_rag_refuses_low_confidence():
     agent = KnowledgeRAGAgent(FakeLLM(["query", "0"]), LowScoreMemory())
-    result = asyncio.run(agent.process({
-        "messages": [HumanMessage(content="会员权益是什么")],
-        "sub_results": {},
-    }))
+    result = asyncio.run(
+        agent.process(
+            {
+                "messages": [HumanMessage(content="会员权益是什么")],
+                "sub_results": {},
+            }
+        )
+    )
     assert result["sub_results"]["knowledge_decision"] == "refuse"
     assert "没有足够" in result["final_response"]
 
@@ -97,10 +110,14 @@ def test_knowledge_rag_answers_with_citation():
         FakeLLM(["query", "0", "answer with POL-X v1 §a"]),
         GoodMemory(),
     )
-    result = asyncio.run(agent.process({
-        "messages": [HumanMessage(content="会员权益")],
-        "sub_results": {},
-    }))
+    result = asyncio.run(
+        agent.process(
+            {
+                "messages": [HumanMessage(content="会员权益")],
+                "sub_results": {},
+            }
+        )
+    )
     assert result["sub_results"]["knowledge_decision"] == "answer"
     assert result["sub_results"]["sources"] == ["POL-X v1 §a"]
     assert result["sub_results"]["knowledge_rag_context"][0]["content"] == "strong"
@@ -109,7 +126,9 @@ def test_knowledge_rag_answers_with_citation():
 def test_policy_docs_have_full_metadata(tmp_path):
     memory = LongTermMemory(index_path=str(tmp_path / "index"))
     memory.embeddings = KeywordishEmbeddings()
-    count = asyncio.run(memory.load_knowledge_base(str(Path(__file__).parent / "knowledge_base")))
+    count = asyncio.run(
+        memory.load_knowledge_base(str(Path(__file__).parent / "knowledge_base"))
+    )
     assert count > 0
     doc_ids = {document["metadata"].get("doc_id") for document in memory.documents}
     expected = {
@@ -138,7 +157,9 @@ def test_superseded_version_is_skipped(tmp_path):
         _policy("P1", version="1.0", body="old body", extra="superseded_by: P1-v2.0\n"),
         encoding="utf-8",
     )
-    (kb / "new.md").write_text(_policy("P1", version="2.0", body="new body"), encoding="utf-8")
+    (kb / "new.md").write_text(
+        _policy("P1", version="2.0", body="new body"), encoding="utf-8"
+    )
     memory = LongTermMemory(index_path=str(tmp_path / "index"))
     memory.embeddings = KeywordishEmbeddings()
     assert asyncio.run(memory.load_knowledge_base(str(kb))) == 1
@@ -174,7 +195,11 @@ def test_stage4_metrics_score_answer_refuse_handoff():
         "当前知识库没有相关信息，暂时无法确认。",
         {},
     )
-    assert refuse["recall_at_k"] and refuse["citation_correct"] and refuse["refusal_correct"]
+    assert (
+        refuse["recall_at_k"]
+        and refuse["citation_correct"]
+        and refuse["refusal_correct"]
+    )
 
     handoff = score_case(
         {"expected_source": None, "expected_action": "handoff"},
@@ -182,7 +207,11 @@ def test_stage4_metrics_score_answer_refuse_handoff():
         "请联系人工客服。",
         {"handoff_required": True},
     )
-    assert handoff["recall_at_k"] and handoff["citation_correct"] and handoff["handoff_correct"]
+    assert (
+        handoff["recall_at_k"]
+        and handoff["citation_correct"]
+        and handoff["handoff_correct"]
+    )
 
     wrong = score_case(
         {"expected_source": None, "expected_action": "refuse"},

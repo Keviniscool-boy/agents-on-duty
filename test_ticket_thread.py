@@ -182,7 +182,9 @@ def test_missing_ticket_is_404_and_content_validated(api):
     """不存在的工单 404；消息内容空/超长 400。"""
     client = TestClient(api)
     assert (
-        client.get("/api/tickets/TK-NOTHING", headers={"X-Test-User": "user-a"}).status_code
+        client.get(
+            "/api/tickets/TK-NOTHING", headers={"X-Test-User": "user-a"}
+        ).status_code
         == 404
     )
     assert (

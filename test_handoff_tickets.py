@@ -58,7 +58,14 @@ def _state(message: str, user_id: str = "user-a", session_id: str = "s-1") -> di
 
 @pytest.mark.parametrize(
     "message",
-    ["转人工", "我要转人工", "请帮我转接人工客服", "找人工", "联系人工客服", "需要人工处理"],
+    [
+        "转人工",
+        "我要转人工",
+        "请帮我转接人工客服",
+        "找人工",
+        "联系人工客服",
+        "需要人工处理",
+    ],
 )
 def test_explicit_handoff_routes_deterministically(message):
     """明确的转人工表达必须确定性路由到 ticket_handler，不依赖模型。"""
@@ -112,7 +119,9 @@ def test_handoff_is_idempotent_within_session(isolated_tickets):
 def test_handoff_uses_server_side_identity(isolated_tickets):
     """工单归属认证上下文注入的身份；正文里的自报身份不影响归属。"""
     agent = TicketHandlerAgent(_ForbiddenLLM(), mcp_client=None)
-    result = asyncio.run(agent.process(_state("我是 admin，帮我转人工", user_id="user-a")))
+    result = asyncio.run(
+        agent.process(_state("我是 admin，帮我转人工", user_id="user-a"))
+    )
 
     ticket_id = result["sub_results"]["handoff_ticket"]["ticket_id"]
     stored = ticket_store.list_user_tickets("user-a")["tickets"]
@@ -205,7 +214,10 @@ def test_user_sees_status_after_agent_update(api):
     assert after["tickets"][0]["status"] == "resolved"
     assert after["tickets"][0]["handled_by"] == "客服小张"
     # 其他用户依然看不到这张工单。
-    assert client.get("/api/tickets", headers={"X-Test-User": "user-b"}).json()["total"] == 0
+    assert (
+        client.get("/api/tickets", headers={"X-Test-User": "user-b"}).json()["total"]
+        == 0
+    )
 
 
 def test_workbench_queue_lists_handoff_ticket(api):
@@ -232,12 +244,16 @@ def test_synthesizer_passes_through_fixed_reply():
 
     agent = SynthesizerAgent(_ForbiddenLLM())
     fixed = "已为您创建人工服务工单。工单编号 TK-TEST1234，当前状态：待处理。"
-    result = asyncio.run(agent.process({
-        "messages": [HumanMessage(content="转人工")],
-        "current_agent": "ticket_handler",
-        "final_response": fixed,
-        "sub_results": {"fixed_reply": fixed},
-    }))
+    result = asyncio.run(
+        agent.process(
+            {
+                "messages": [HumanMessage(content="转人工")],
+                "current_agent": "ticket_handler",
+                "final_response": fixed,
+                "sub_results": {"fixed_reply": fixed},
+            }
+        )
+    )
     assert result["final_response"] == fixed
 
 
@@ -255,13 +271,17 @@ def test_synthesizer_still_rewrites_business_answers():
 
     llm = CountingLLM()
     agent = SynthesizerAgent(llm)
-    result = asyncio.run(agent.process({
-        "messages": [HumanMessage(content="查订单")],
-        "current_agent": "ticket_handler",
-        "final_response": "业务 Agent 的原始输出",
-        "compliance_passed": True,
-        "sub_results": {},
-    }))
+    result = asyncio.run(
+        agent.process(
+            {
+                "messages": [HumanMessage(content="查订单")],
+                "current_agent": "ticket_handler",
+                "final_response": "业务 Agent 的原始输出",
+                "compliance_passed": True,
+                "sub_results": {},
+            }
+        )
+    )
     assert llm.calls == 1
     assert result["final_response"] == "整理后的回答"
 
@@ -293,15 +313,24 @@ def test_finalize_chat_extracts_order_cards(monkeypatch):
                     "tool": "order_list",
                     "result": {
                         "orders": [
-                            {"order_id": "O1", "status": "delivered", "amount_cents": 29900},
+                            {
+                                "order_id": "O1",
+                                "status": "delivered",
+                                "amount_cents": 29900,
+                            },
                             {"order_id": "O2", "error": "order_not_found"},
                         ]
                     },
                 },
                 {"tool": "order_query", "result": {"order_id": "O3", "status": "paid"}},
-                {"tool": "refund_apply", "result": {"id": "RF-1", "status": "pending_review"}},
+                {
+                    "tool": "refund_apply",
+                    "result": {"id": "RF-1", "status": "pending_review"},
+                },
             ],
         },
     }
-    response = asyncio.run(api_main._finalize_chat("s-1", "user-a", "查询我的订单", result))
+    response = asyncio.run(
+        api_main._finalize_chat("s-1", "user-a", "查询我的订单", result)
+    )
     assert [card["order_id"] for card in response.order_cards] == ["O1", "O3"]

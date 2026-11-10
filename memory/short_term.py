@@ -110,9 +110,9 @@ class ShortTermMemory:
     def _add_to_fallback(self, session_id: str, message: dict) -> None:
         """写进程内副本（读取回退链的最后一环，A3）。"""
         self._fallback_store.setdefault(session_id, []).append(message)
-        self._fallback_store[session_id] = (
-            self._fallback_store[session_id][-self.max_turns:]
-        )
+        self._fallback_store[session_id] = self._fallback_store[session_id][
+            -self.max_turns :
+        ]
 
     async def add_message(
         self,

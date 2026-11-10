@@ -46,7 +46,9 @@ class TracedChatModel:
                 )
 
     def bind_tools(self, tools, **kwargs):
-        return TracedChatModel(self._inner.bind_tools(tools, **kwargs), self._model_name)
+        return TracedChatModel(
+            self._inner.bind_tools(tools, **kwargs), self._model_name
+        )
 
     def __getattr__(self, name):
         return getattr(self._inner, name)

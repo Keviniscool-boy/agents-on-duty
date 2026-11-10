@@ -101,7 +101,10 @@ def test_general_ticket_workbench_lifecycle(tmp_path, monkeypatch):
     assert updated["status"] == "processing"
     assert updated["handled_by"] == "support"
     assert ticket_store.list_tickets(status="pending") == []
-    assert ticket_store.list_tickets(status="processing")[0]["ticket_id"] == created["ticket_id"]
+    assert (
+        ticket_store.list_tickets(status="processing")[0]["ticket_id"]
+        == created["ticket_id"]
+    )
 
 
 def test_local_ticket_tool_keeps_server_injected_owner_fields():

@@ -16,7 +16,9 @@ RESULTS_DIR = Path(__file__).with_name("results")
 
 
 def load_cases() -> list[dict]:
-    return [json.loads(line) for line in CASES_PATH.read_text(encoding="utf-8").splitlines()]
+    return [
+        json.loads(line) for line in CASES_PATH.read_text(encoding="utf-8").splitlines()
+    ]
 
 
 def register(client: httpx.Client) -> str:

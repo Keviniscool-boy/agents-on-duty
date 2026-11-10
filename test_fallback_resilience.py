@@ -154,9 +154,9 @@ def test_a1_write_through_reaches_mysql_when_redis_up(fake_mysql, fake_redis_ok)
     memory = wm_mod.WorkingMemory(redis_url="redis://fake:6379/0")
     memory.update("sess", {"last_intent": "ticket_handler"}, user_id="u1")
 
-    assert any(
-        c.startswith(("save", "merge")) for c in fake_mysql.calls
-    ), f"MySQL 应收到扇出写入，实际调用={fake_mysql.calls}"
+    assert any(c.startswith(("save", "merge")) for c in fake_mysql.calls), (
+        f"MySQL 应收到扇出写入，实际调用={fake_mysql.calls}"
+    )
 
 
 def test_a1_redis_down_still_reads_data(fake_mysql, fake_redis_ok, monkeypatch):
@@ -181,8 +181,8 @@ def test_a2_runtime_sql_error_converted_to_unavailable():
     """A2 反转：连接建立后的 SQL 执行错误转为 MySQLUnavailableError。"""
     store = MySQLStore()
     store._conn = mock.Mock()
-    store._conn.cursor.return_value.execute.side_effect = (
-        pymysql.err.OperationalError(1213, "Deadlock found")
+    store._conn.cursor.return_value.execute.side_effect = pymysql.err.OperationalError(
+        1213, "Deadlock found"
     )
     with pytest.raises(MySQLUnavailableError):
         store.load_working_context("sess")
@@ -279,7 +279,12 @@ def test_b14_fallback_search_applies_min_score(monkeypatch):
     memory = LongTermMemory.__new__(LongTermMemory)
     memory.index = None
     memory.documents = [
-        {"id": "a", "content": "退货政策：七天无理由退货", "source": "a.txt", "metadata": {}},
+        {
+            "id": "a",
+            "content": "退货政策：七天无理由退货",
+            "source": "a.txt",
+            "metadata": {},
+        },
         {"id": "b", "content": "开户流程说明", "source": "b.txt", "metadata": {}},
     ]
     monkeypatch.setattr(memory, "embed_text", mock.AsyncMock())

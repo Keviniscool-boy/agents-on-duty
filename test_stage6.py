@@ -9,7 +9,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from auth.security import get_current_user
-from evaluation.pi_comparison import RunnerResult, SubprocessPiRunner, decide, evaluate_runners, summarize
+from evaluation.pi_comparison import (
+    RunnerResult,
+    SubprocessPiRunner,
+    decide,
+    evaluate_runners,
+    summarize,
+)
 from knowledge.service import (
     KnowledgeService,
     KnowledgeUnavailableError,
@@ -23,7 +29,9 @@ PI_DIR = PROJECT_ROOT / "experiments" / "pi_knowledge_agent"
 
 
 def test_ticket_handler_normalizes_responses_api_text_blocks():
-    assert _text_content([{"type": "output_text", "text": "订单已查询"}]) == "订单已查询"
+    assert (
+        _text_content([{"type": "output_text", "text": "订单已查询"}]) == "订单已查询"
+    )
     assert _text_content("订单已查询") == "订单已查询"
 
 
@@ -33,20 +41,30 @@ class FakeMemory:
     ]
 
     async def search(self, query, top_k=5, min_score=0.5):
-        return [{
-            "source": "POL-X v1.0 §A",
-            "content": "七天无理由退货片段",
-            "score": 0.92,
-            "retrieval": "hybrid",
-            "metadata": {"doc_id": "POL-X", "version": "1.0", "section": "A"},
-        }]
+        return [
+            {
+                "source": "POL-X v1.0 §A",
+                "content": "七天无理由退货片段",
+                "score": 0.92,
+                "retrieval": "hybrid",
+                "metadata": {"doc_id": "POL-X", "version": "1.0", "section": "A"},
+            }
+        ]
 
     def knowledge_status(self):
         return "ready"
 
 
 class FakeRunner:
-    def __init__(self, answer="", sources=None, latency_ms=10.0, cost_usd=None, cost_known=None, error=""):
+    def __init__(
+        self,
+        answer="",
+        sources=None,
+        latency_ms=10.0,
+        cost_usd=None,
+        cost_known=None,
+        error="",
+    ):
         self.answer = answer
         self.sources = sources or []
         self.latency_ms = latency_ms
@@ -83,11 +101,15 @@ def test_knowledge_api_search(monkeypatch):
 
     monkeypatch.setattr(api_main, "long_term_memory", FakeMemory())
     api_main.app.dependency_overrides[get_current_user] = lambda: {
-        "id": "u", "username": "u", "role": "user",
+        "id": "u",
+        "username": "u",
+        "role": "user",
     }
     try:
         client = TestClient(api_main.app)
-        response = client.post("/api/knowledge/search", json={"query": "退货", "top_k": 3})
+        response = client.post(
+            "/api/knowledge/search", json={"query": "退货", "top_k": 3}
+        )
         assert response.status_code == 200
         hits = response.json()["hits"]
         assert hits and hits[0]["doc_id"] == "POL-X"
@@ -112,7 +134,9 @@ def test_knowledge_api_unavailable_returns_503(monkeypatch):
 
     monkeypatch.setattr(api_main, "long_term_memory", FailingMemory())
     api_main.app.dependency_overrides[get_current_user] = lambda: {
-        "id": "u", "username": "u", "role": "user",
+        "id": "u",
+        "username": "u",
+        "role": "user",
     }
     try:
         client = TestClient(api_main.app)
@@ -180,15 +204,24 @@ def test_mcp_service_initializes_knowledge(monkeypatch):
 
 
 def test_pi_comparison_with_fake_runners():
-    cases = [{
-        "id": "case-1",
-        "question": "退货期限？",
-        "expected_source": "POL-X",
-        "expected_keywords": ["七天"],
-        "expected_action": "answer",
-    }]
-    rag = FakeRunner(answer="七天 [POL-X v1.0 §A]", sources=["POL-X v1.0 §A"], latency_ms=100.0)
-    pi = FakeRunner(answer="七天 [POL-X v1.0 §A]", sources=["POL-X v1.0 §A"], latency_ms=120.0, cost_usd=0.01)
+    cases = [
+        {
+            "id": "case-1",
+            "question": "退货期限？",
+            "expected_source": "POL-X",
+            "expected_keywords": ["七天"],
+            "expected_action": "answer",
+        }
+    ]
+    rag = FakeRunner(
+        answer="七天 [POL-X v1.0 §A]", sources=["POL-X v1.0 §A"], latency_ms=100.0
+    )
+    pi = FakeRunner(
+        answer="七天 [POL-X v1.0 §A]",
+        sources=["POL-X v1.0 §A"],
+        latency_ms=120.0,
+        cost_usd=0.01,
+    )
     results = evaluate_runners(cases, rag, pi)
     summary = summarize(results)
     assert summary["rag"]["valid_cases"] == 1
@@ -200,7 +233,12 @@ def test_pi_comparison_with_fake_runners():
     assert summary["decision"]["expand_pi"] is False
     assert summary["decision"]["decision_basis"] == "citation_full_string_match_only"
 
-    better_pi = FakeRunner(answer="七天 [POL-X v1.0 §A]", sources=["POL-X v1.0 §A"], latency_ms=100.0, cost_usd=0.01)
+    better_pi = FakeRunner(
+        answer="七天 [POL-X v1.0 §A]",
+        sources=["POL-X v1.0 §A"],
+        latency_ms=100.0,
+        cost_usd=0.01,
+    )
     worse_rag = FakeRunner(answer="不知道", sources=[], latency_ms=150.0)
     better = summarize(evaluate_runners(cases, worse_rag, better_pi))
     assert better["comparison"]["citation_full_delta"] >= 0.05

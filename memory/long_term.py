@@ -108,9 +108,7 @@ class LongTermMemory:
             self.index = faiss.read_index(str(self.index_path))
 
             if metadata_path.exists():
-                metadata = json.loads(
-                    metadata_path.read_text(encoding="utf-8")
-                )
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
                 if isinstance(metadata, dict):
                     stored_identity = metadata.get("embedding", {})
                     if stored_identity != self.embedding_identity:
@@ -173,9 +171,7 @@ class LongTermMemory:
         metadata: dict | None = None,
     ) -> str:
         """向量化并加入索引/内存，不落盘（批量场景由调用方统一 save）。"""
-        doc_id = hashlib.md5(
-            content.encode("utf-8")
-        ).hexdigest()[:12]
+        doc_id = hashlib.md5(content.encode("utf-8")).hexdigest()[:12]
 
         vector = await self.embed_text(content)
 
@@ -197,21 +193,21 @@ class LongTermMemory:
 
         return doc_id
 
-    #批量添加多份文档
+    # 批量添加多份文档
     async def add_documents_batch(
-            self,
-            documents:list[dict],
+        self,
+        documents: list[dict],
     ) -> list[str]:
-        '''批量添加多份文档'''
-        #保存每一份文档生成的ID
-        doc_ids=[]
+        """批量添加多份文档"""
+        # 保存每一份文档生成的ID
+        doc_ids = []
 
-        #逐个处理文档
+        # 逐个处理文档
         for document in documents:
-            doc_id=await self._add_document(
-                content=document.get("content",""),
-                source=document.get("source",""),
-                metadata=document.get("metadata",{}),
+            doc_id = await self._add_document(
+                content=document.get("content", ""),
+                source=document.get("source", ""),
+                metadata=document.get("metadata", {}),
             )
             doc_ids.append(doc_id)
 
@@ -246,11 +242,16 @@ class LongTermMemory:
         kb_path = Path(kb_dir)
         documents = []
         published_ids = set()
-        previous_index = faiss.clone_index(self.index) if self.index is not None else None
+        previous_index = (
+            faiss.clone_index(self.index) if self.index is not None else None
+        )
         previous_documents = list(self.documents)
         try:
             for file_path in sorted(kb_path.rglob("*")) if kb_path.exists() else []:
-                if not file_path.is_file() or file_path.suffix.lower() not in {".txt", ".md"}:
+                if not file_path.is_file() or file_path.suffix.lower() not in {
+                    ".txt",
+                    ".md",
+                }:
                     continue
                 content = file_path.read_text(encoding="utf-8")
                 if file_path.suffix.lower() == ".md":
@@ -258,20 +259,33 @@ class LongTermMemory:
                     if len(parts) != 3 or parts[0].strip():
                         raise ValueError(f"Invalid front matter: {file_path.name}")
                     metadata = yaml.safe_load(parts[1])
-                    if not isinstance(metadata, dict) or not all(metadata.get(k) for k in ("doc_id", "version", "status")):
+                    if not isinstance(metadata, dict) or not all(
+                        metadata.get(k) for k in ("doc_id", "version", "status")
+                    ):
                         raise ValueError(f"Missing policy metadata: {file_path.name}")
-                    if metadata["status"] != "published" or metadata.get("superseded_by"):
+                    if metadata["status"] != "published" or metadata.get(
+                        "superseded_by"
+                    ):
                         continue
                     start = date.fromisoformat(str(metadata["effective_date"]))
-                    end = date.fromisoformat(str(metadata["expiration_date"])) if metadata.get("expiration_date") else None
+                    end = (
+                        date.fromisoformat(str(metadata["expiration_date"]))
+                        if metadata.get("expiration_date")
+                        else None
+                    )
                     if start > date.today() or (end and end < date.today()):
                         continue
                     if metadata["doc_id"] in published_ids:
-                        raise ValueError(f"Multiple active versions: {metadata['doc_id']}")
+                        raise ValueError(
+                            f"Multiple active versions: {metadata['doc_id']}"
+                        )
                     published_ids.add(metadata["doc_id"])
-                    metadata = {**metadata, "effective_date": start.isoformat(),
-                                "expiration_date": end.isoformat() if end else None,
-                                "file": str(file_path.relative_to(kb_path))}
+                    metadata = {
+                        **metadata,
+                        "effective_date": start.isoformat(),
+                        "expiration_date": end.isoformat() if end else None,
+                        "file": str(file_path.relative_to(kb_path)),
+                    }
                     sections = re.split(r"(?m)^##\s+(.+?)\s*$", parts[2])
                     if len(sections) == 1:
                         # 没有二级标题时按整篇切分，避免政策被静默跳过。
@@ -280,13 +294,28 @@ class LongTermMemory:
                         heading, body = sections[i], sections[i + 1].strip()
                         for chunk in self._chunk_text(body):
                             source = f"{metadata['doc_id']} v{metadata['version']} §{heading}"
-                            documents.append({"content": chunk, "source": source,
-                                              "metadata": {**metadata, "section": heading}})
+                            documents.append(
+                                {
+                                    "content": chunk,
+                                    "source": source,
+                                    "metadata": {**metadata, "section": heading},
+                                }
+                            )
                 else:
                     for chunk in self._chunk_text(content):
-                        documents.append({"content": chunk, "source": file_path.name,
-                                          "metadata": {"file": str(file_path.relative_to(kb_path))}})
-            existing = [{k: doc[k] for k in ("content", "source", "metadata")} for doc in self.documents]
+                        documents.append(
+                            {
+                                "content": chunk,
+                                "source": file_path.name,
+                                "metadata": {
+                                    "file": str(file_path.relative_to(kb_path))
+                                },
+                            }
+                        )
+            existing = [
+                {k: doc[k] for k in ("content", "source", "metadata")}
+                for doc in self.documents
+            ]
             if documents == existing and (not documents or self.index is not None):
                 self.index_build_failed = False
                 return 0
@@ -294,7 +323,14 @@ class LongTermMemory:
             self.documents = []
             for document in documents:
                 await self._add_document(**document)
-        except (EmbeddingUnavailable, ValueError, TypeError, KeyError, OSError, yaml.YAMLError) as exc:
+        except (
+            EmbeddingUnavailable,
+            ValueError,
+            TypeError,
+            KeyError,
+            OSError,
+            yaml.YAMLError,
+        ) as exc:
             self.index = previous_index
             self.documents = previous_documents
             self.index_build_failed = True
@@ -346,7 +382,7 @@ class LongTermMemory:
             if len(run) == 1:
                 terms.add(run)
             else:
-                terms.update(run[i:i + 2] for i in range(len(run) - 1))
+                terms.update(run[i : i + 2] for i in range(len(run) - 1))
         return list(terms)
 
     def _keyword_hits(
@@ -385,19 +421,24 @@ class LongTermMemory:
         fused: dict[str, dict] = {}
         for source, hits in (("vector", vector_hits), ("keyword", keyword_hits)):
             for rank, (document, score) in enumerate(hits):
-                entry = fused.setdefault(document["content"], {
-                    "document": document,
-                    "vector_score": 0.0,
-                    "keyword_score": 0.0,
-                    "rrf": 0.0,
-                })
+                entry = fused.setdefault(
+                    document["content"],
+                    {
+                        "document": document,
+                        "vector_score": 0.0,
+                        "keyword_score": 0.0,
+                        "rrf": 0.0,
+                    },
+                )
                 entry[f"{source}_score"] = max(entry[f"{source}_score"], score)
                 entry["rrf"] += 1.0 / (60 + rank + 1)
         ordered = sorted(fused.values(), key=lambda entry: entry["rrf"], reverse=True)
         results = []
         for entry in ordered[:top_k]:
             document = entry["document"].copy()
-            document["score"] = round(max(entry["vector_score"], entry["keyword_score"]), 4)
+            document["score"] = round(
+                max(entry["vector_score"], entry["keyword_score"]), 4
+            )
             document["vector_score"] = round(entry["vector_score"], 4)
             document["keyword_score"] = round(entry["keyword_score"], 4)
             document["retrieval"] = "hybrid"
@@ -439,7 +480,10 @@ class LongTermMemory:
                 continue
             document = self.documents[index]
             metadata = document.get("metadata", {})
-            if metadata.get("expiration_date") and metadata["expiration_date"] < date.today().isoformat():
+            if (
+                metadata.get("expiration_date")
+                and metadata["expiration_date"] < date.today().isoformat()
+            ):
                 continue
             vector_hits.append((document, float(score)))
 
@@ -470,14 +514,13 @@ class LongTermMemory:
             return []
         for document in self.documents:
             metadata = document.get("metadata", {})
-            if metadata.get("expiration_date") and metadata["expiration_date"] < date.today().isoformat():
+            if (
+                metadata.get("expiration_date")
+                and metadata["expiration_date"] < date.today().isoformat()
+            ):
                 continue
             content = document["content"].lower()
-            hits = sum(
-                1
-                for term in query_terms
-                if term in content
-            )
+            hits = sum(1 for term in query_terms if term in content)
             score = hits / len(query_terms)
             if score >= min_score:
                 scored.append((score, document))

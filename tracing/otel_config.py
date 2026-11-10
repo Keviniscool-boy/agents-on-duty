@@ -45,9 +45,7 @@ class AgentMetrics:
         success: bool,
     ) -> None:
         with self._lock:
-            self._call_counts[agent_name] = (
-                self._call_counts.get(agent_name, 0) + 1
-            )
+            self._call_counts[agent_name] = self._call_counts.get(agent_name, 0) + 1
             self._total_duration[agent_name] = (
                 self._total_duration.get(agent_name, 0.0) + duration_ms
             )
@@ -63,7 +61,9 @@ class AgentMetrics:
         with self._lock:
             self._degradation_counts[key] = self._degradation_counts.get(key, 0) + 1
 
-    def record_model_call(self, model_name: str, duration_ms: float, success: bool) -> None:
+    def record_model_call(
+        self, model_name: str, duration_ms: float, success: bool
+    ) -> None:
         """记录一次真实模型调用（被 TracedChatModel 调用）。"""
         key = model_name or "unknown"
         with self._lock:
@@ -170,7 +170,9 @@ def compliance_violation_codes(violations: list[str]) -> list[str]:
     codes: list[str] = []
     for item in violations or []:
         text = str(item).lower()
-        code = next((value for needle, value in mapping if needle in text), "llm_violation")
+        code = next(
+            (value for needle, value in mapping if needle in text), "llm_violation"
+        )
         if code not in codes:
             codes.append(code)
     return codes
@@ -192,7 +194,9 @@ def trace_agent_call(agent_name: str) -> Callable:
                 try:
                     result = await func(*args, **kwargs)
                     if isinstance(result, dict) and "compliance_passed" in result:
-                        compliance = result.get("sub_results", {}).get("compliance", {}) or {}
+                        compliance = (
+                            result.get("sub_results", {}).get("compliance", {}) or {}
+                        )
                         detail = "passed" if result["compliance_passed"] else "rejected"
                         risk = compliance.get("risk_level")
                         if risk in {"low", "medium", "high", "critical"}:
@@ -200,24 +204,40 @@ def trace_agent_call(agent_name: str) -> Callable:
                         codes = compliance.get("violation_codes") or []
                         if codes:
                             detail += ";codes=" + ",".join(codes)
-                    elif agent_name.startswith("compliance") and hasattr(result, "passed"):
+                    elif agent_name.startswith("compliance") and hasattr(
+                        result, "passed"
+                    ):
                         detail = "passed" if result.passed else "rejected"
                         risk = getattr(result, "risk_level", None)
                         if risk in {"low", "medium", "high", "critical"}:
                             detail += f";risk={risk}"
-                        codes = compliance_violation_codes(getattr(result, "violations", []) or [])
+                        codes = compliance_violation_codes(
+                            getattr(result, "violations", []) or []
+                        )
                         if codes:
                             detail += ";codes=" + ",".join(codes)
                     return result
                 except BaseException as exc:
-                    outcome = "interrupted" if type(exc).__name__ == "GraphInterrupt" else "error"
+                    outcome = (
+                        "interrupted"
+                        if type(exc).__name__ == "GraphInterrupt"
+                        else "error"
+                    )
                     detail = type(exc).__name__
                     raise
                 finally:
                     if context:
-                        record_event(kind="compliance" if agent_name == "compliance_process" else "node", action=agent_name, outcome=outcome,
-                                     duration_ms=(time.perf_counter() - started) * 1000,
-                                     detail=detail, **context)
+                        record_event(
+                            kind="compliance"
+                            if agent_name == "compliance_process"
+                            else "node",
+                            action=agent_name,
+                            outcome=outcome,
+                            duration_ms=(time.perf_counter() - started) * 1000,
+                            detail=detail,
+                            **context,
+                        )
+
             # metrics 与 tracing 解耦（B13）：tracer 缺失时仍然记录调用指标，
             # 保证 /api/metrics 在未配置 OTEL 时也有数据。
             tracer = get_tracer()

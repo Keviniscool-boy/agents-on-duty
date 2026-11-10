@@ -23,6 +23,7 @@ def isolate_working_memory(monkeypatch):
         def __getattr__(self, name):
             def unavailable(*args, **kwargs):
                 raise MySQLUnavailableError("isolated test")
+
             return unavailable
 
     monkeypatch.setenv("REDIS_URL", "")
@@ -110,7 +111,9 @@ def _rule_check_sequence(results):
                 violations=["fake violation"],
                 sanitized_content=content,
             )
-        return ComplianceResult(passed=True, risk_level="low", sanitized_content=content)
+        return ComplianceResult(
+            passed=True, risk_level="low", sanitized_content=content
+        )
 
     return scripted
 
@@ -119,7 +122,9 @@ def test_compliance_loop_exhausts_retries_then_falls_back(monkeypatch):
     """合规始终不通过：重写 MAX_COMPLIANCE_RETRIES 次后由合成节点降级。"""
     from agents.compliance_checker import ComplianceCheckerAgent
 
-    monkeypatch.setattr(ComplianceCheckerAgent, "rule_check", _rule_check_sequence(["fail"]))
+    monkeypatch.setattr(
+        ComplianceCheckerAgent, "rule_check", _rule_check_sequence(["fail"])
+    )
     llm = FakeLLM([_compliance_reply(False)])
     result = _run_graph(llm)
 
@@ -128,7 +133,10 @@ def test_compliance_loop_exhausts_retries_then_falls_back(monkeypatch):
     assert result["sub_results"]["compliance"]["passed"] is False
     assert result["current_agent"] == "fallback"
     # 合规重试耗尽后保留 fallback 节点的安全答复。
-    assert result["final_response"] == "我是客服助手，可以帮你查询订单、了解退款/售后政策，或申请售后。"
+    assert (
+        result["final_response"]
+        == "我是客服助手，可以帮你查询订单、了解退款/售后政策，或申请售后。"
+    )
     # 首轮固定话术只走规则检查（0 次）；之后 2 次重写 + 2 次 LLM 检查 = 4 次。
     assert llm.calls == 2 * MAX_COMPLIANCE_RETRIES
 
@@ -137,7 +145,9 @@ def test_compliance_passes_after_rewrite(monkeypatch):
     """第一次不通过、重写后通过：第二次合规检查即放行。"""
     from agents.compliance_checker import ComplianceCheckerAgent
 
-    monkeypatch.setattr(ComplianceCheckerAgent, "rule_check", _rule_check_sequence(["fail", "pass"]))
+    monkeypatch.setattr(
+        ComplianceCheckerAgent, "rule_check", _rule_check_sequence(["fail", "pass"])
+    )
     llm = FakeLLM(
         [
             "修正后的合规回答",
@@ -148,4 +158,7 @@ def test_compliance_passes_after_rewrite(monkeypatch):
 
     assert result["compliance_retries"] == 1
     assert result["compliance_passed"] is True
-    assert result["final_response"] == "我是客服助手，可以帮你查询订单、了解退款/售后政策，或申请售后。"
+    assert (
+        result["final_response"]
+        == "我是客服助手，可以帮你查询订单、了解退款/售后政策，或申请售后。"
+    )

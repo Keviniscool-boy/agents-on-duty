@@ -29,59 +29,69 @@ async def main() -> None:
             json={"username": username_a, "password": password},
         )
         token_a = register_a.json()["access_token"]
-        results.append({
-            "case": "register",
-            "passed": register_a.status_code == 201,
-            "status_code": register_a.status_code,
-        })
+        results.append(
+            {
+                "case": "register",
+                "passed": register_a.status_code == 201,
+                "status_code": register_a.status_code,
+            }
+        )
 
         duplicate = await client.post(
             "/api/auth/register",
             json={"username": username_a, "password": password},
         )
-        results.append({
-            "case": "duplicate_register_rejected",
-            "passed": duplicate.status_code == 409,
-            "status_code": duplicate.status_code,
-        })
+        results.append(
+            {
+                "case": "duplicate_register_rejected",
+                "passed": duplicate.status_code == 409,
+                "status_code": duplicate.status_code,
+            }
+        )
 
         login = await client.post(
             "/api/auth/login",
             json={"username": username_a, "password": password},
         )
-        results.append({
-            "case": "login",
-            "passed": login.status_code == 200 and "access_token" in login.json(),
-            "status_code": login.status_code,
-        })
+        results.append(
+            {
+                "case": "login",
+                "passed": login.status_code == 200 and "access_token" in login.json(),
+                "status_code": login.status_code,
+            }
+        )
 
         wrong_login = await client.post(
             "/api/auth/login",
             json={"username": username_a, "password": "wrong-password"},
         )
-        results.append({
-            "case": "wrong_password_rejected",
-            "passed": wrong_login.status_code == 401,
-            "status_code": wrong_login.status_code,
-        })
+        results.append(
+            {
+                "case": "wrong_password_rejected",
+                "passed": wrong_login.status_code == 401,
+                "status_code": wrong_login.status_code,
+            }
+        )
 
         no_token = await client.get("/api/auth/me")
         invalid_token = await client.get(
             "/api/auth/me",
             headers={"Authorization": "Bearer invalid-token"},
         )
-        results.extend([
-            {
-                "case": "missing_token_rejected",
-                "passed": no_token.status_code == 401,
-                "status_code": no_token.status_code,
-            },
-            {
-                "case": "invalid_token_rejected",
-                "passed": invalid_token.status_code == 401,
-                "status_code": invalid_token.status_code,
-            },
-        ])
+        results.extend(
+            [
+                {
+                    "case": "missing_token_rejected",
+                    "passed": no_token.status_code == 401,
+                    "status_code": no_token.status_code,
+                },
+                {
+                    "case": "invalid_token_rejected",
+                    "passed": invalid_token.status_code == 401,
+                    "status_code": invalid_token.status_code,
+                },
+            ]
+        )
 
         register_b = await client.post(
             "/api/auth/register",
@@ -111,23 +121,25 @@ async def main() -> None:
             headers={"Authorization": f"Bearer {token_b}"},
             json={"message": "读取这个会话", "session_id": session_id},
         )
-        results.extend([
-            {
-                "case": "owner_can_read_history",
-                "passed": own_history.status_code == 200,
-                "status_code": own_history.status_code,
-            },
-            {
-                "case": "other_user_cannot_read_history",
-                "passed": other_history.status_code == 403,
-                "status_code": other_history.status_code,
-            },
-            {
-                "case": "other_user_cannot_reuse_session",
-                "passed": other_chat.status_code == 403,
-                "status_code": other_chat.status_code,
-            },
-        ])
+        results.extend(
+            [
+                {
+                    "case": "owner_can_read_history",
+                    "passed": own_history.status_code == 200,
+                    "status_code": own_history.status_code,
+                },
+                {
+                    "case": "other_user_cannot_read_history",
+                    "passed": other_history.status_code == 403,
+                    "status_code": other_history.status_code,
+                },
+                {
+                    "case": "other_user_cannot_reuse_session",
+                    "passed": other_chat.status_code == 403,
+                    "status_code": other_chat.status_code,
+                },
+            ]
+        )
 
     passed = sum(item["passed"] for item in results)
     summary = {

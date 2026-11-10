@@ -70,6 +70,7 @@ def isolated_db(tmp_path, monkeypatch):
         def __getattr__(self, name):
             def unavailable(*args, **kwargs):
                 raise MySQLUnavailableError("isolated test")
+
             return unavailable
 
     monkeypatch.setattr(working_memory_module, "mysql_store", OfflineMySQL())
@@ -77,12 +78,12 @@ def isolated_db(tmp_path, monkeypatch):
 
 
 def _order_for(user: str = "user-a") -> dict:
-    return next(
-        item for item in svc.list_orders(user) if item["status"] == "delivered"
-    )
+    return next(item for item in svc.list_orders(user) if item["status"] == "delivered")
 
 
-def _refund_llm(order_id: str, final_reply: str = "客服已批准您的退款申请，感谢耐心等待。") -> FakeLLM:
+def _refund_llm(
+    order_id: str, final_reply: str = "客服已批准您的退款申请，感谢耐心等待。"
+) -> FakeLLM:
     return FakeLLM(
         [
             AIMessage(
@@ -124,9 +125,13 @@ def _pause_graph(order_id: str, session_id: str | None = None, checkpointer=None
     """驱动图走到 human_review 并暂停，返回 (graph, config, session_id)。"""
     session_id = session_id or f"s-{uuid.uuid4().hex[:10]}"
     from auth.database import save_session_owner
+
     save_session_owner(session_id, "user-a")
     graph = create_supervisor_graph(
-        _refund_llm(order_id), None, WorkingMemory(redis_url=None), None,
+        _refund_llm(order_id),
+        None,
+        WorkingMemory(redis_url=None),
+        None,
         checkpointer=checkpointer,
     )
     config = {"configurable": {"thread_id": session_id}}
@@ -163,7 +168,9 @@ def test_refund_reaches_interrupt_without_another_model_call(isolated_db):
     llm.ainvoke = fail_after_first
     graph = create_supervisor_graph(llm, None, WorkingMemory(redis_url=None), None)
     config = {"configurable": {"thread_id": "no-second-model"}}
-    result = asyncio.run(graph.ainvoke(_initial_state("no-second-model"), config=config))
+    result = asyncio.run(
+        graph.ainvoke(_initial_state("no-second-model"), config=config)
+    )
     assert result.get("__interrupt__")
     assert llm.calls == 1
 
@@ -174,10 +181,17 @@ def test_approve_resumes_graph_and_finalizes_state(isolated_db):
     graph, config, session_id = _pause_graph(order["order_id"])
     refund = svc.list_refunds("user-a")[0]
 
-    assert svc.record_refund_decision(refund["id"], "approve", "包装完好", "ops-1")["status"] == "approved"
+    assert (
+        svc.record_refund_decision(refund["id"], "approve", "包装完好", "ops-1")[
+            "status"
+        ]
+        == "approved"
+    )
     result = asyncio.run(
         graph.ainvoke(
-            Command(resume={"action": "approve", "note": "包装完好", "operator": "ops"}),
+            Command(
+                resume={"action": "approve", "note": "包装完好", "operator": "ops"}
+            ),
             config=config,
         )
     )
@@ -185,7 +199,11 @@ def test_approve_resumes_graph_and_finalizes_state(isolated_db):
     assert result["handoff_decision"]["action"] == "approve"
     assert svc.list_refunds("user-a")[0]["status"] == "approved"
     actions = svc.list_refund_actions(refund["id"])
-    assert len(actions) == 1 and actions[0]["action"] == "approve" and actions[0]["operator_id"] == "ops-1"
+    assert (
+        len(actions) == 1
+        and actions[0]["action"] == "approve"
+        and actions[0]["operator_id"] == "ops-1"
+    )
 
 
 def test_reject_decision_produces_rejection(isolated_db):
@@ -193,7 +211,9 @@ def test_reject_decision_produces_rejection(isolated_db):
     order = _order_for()
     graph = create_supervisor_graph(
         _refund_llm(order["order_id"], final_reply="很抱歉，您的退款申请未通过审核。"),
-        None, WorkingMemory(redis_url=None), None,
+        None,
+        WorkingMemory(redis_url=None),
+        None,
     )
     config = {"configurable": {"thread_id": "s-reject"}}
     asyncio.run(graph.ainvoke(_initial_state("s-reject"), config=config))
@@ -201,7 +221,12 @@ def test_reject_decision_produces_rejection(isolated_db):
 
     svc.record_refund_decision(refund["id"], "reject", "超过演示规则", "ops-1")
     result = asyncio.run(
-        graph.ainvoke(Command(resume={"action": "reject", "note": "超过演示规则", "operator": "ops"}), config=config)
+        graph.ainvoke(
+            Command(
+                resume={"action": "reject", "note": "超过演示规则", "operator": "ops"}
+            ),
+            config=config,
+        )
     )
     assert "拒绝" in result["final_response"] or "未通过" in result["final_response"]
     assert svc.list_refunds("user-a")[0]["status"] == "rejected"
@@ -212,16 +237,29 @@ def test_need_info_keeps_refund_pending_and_ticket_processing(isolated_db):
     order = _order_for()
     graph = create_supervisor_graph(
         _refund_llm(order["order_id"], final_reply="请补充商品照片和包装状态。"),
-        None, WorkingMemory(redis_url=None), None,
+        None,
+        WorkingMemory(redis_url=None),
+        None,
     )
     config = {"configurable": {"thread_id": "s-info"}}
     asyncio.run(graph.ainvoke(_initial_state("s-info"), config=config))
     refund = svc.list_refunds("user-a")[0]
 
-    result = svc.record_refund_decision(refund["id"], "need_info", "请提供商品照片", "ops-1")
+    result = svc.record_refund_decision(
+        refund["id"], "need_info", "请提供商品照片", "ops-1"
+    )
     assert result["status"] == "pending_review"
     resumed = asyncio.run(
-        graph.ainvoke(Command(resume={"action": "need_info", "note": "请提供商品照片", "operator": "ops"}), config=config)
+        graph.ainvoke(
+            Command(
+                resume={
+                    "action": "need_info",
+                    "note": "请提供商品照片",
+                    "operator": "ops",
+                }
+            ),
+            config=config,
+        )
     )
     assert "补充" in resumed["final_response"]
     with svc._connect() as db:
@@ -238,7 +276,10 @@ def test_duplicate_decision_is_rejected_by_state_machine(isolated_db):
     graph, config, session_id = _pause_graph(order["order_id"])
     refund = svc.list_refunds("user-a")[0]
 
-    assert svc.record_refund_decision(refund["id"], "approve", "", "ops-1")["status"] == "approved"
+    assert (
+        svc.record_refund_decision(refund["id"], "approve", "", "ops-1")["status"]
+        == "approved"
+    )
     second = svc.record_refund_decision(refund["id"], "reject", "", "ops-1")
     assert second["error"] == "invalid_state"
     # 注意：图的暂停点仍在（未调用 resume）；防重复恢复由 API 层保证——
@@ -257,7 +298,10 @@ def test_restart_recovery_resumes_from_persistent_checkpoint(isolated_db, tmp_pa
 
         conn1 = await aiosqlite.connect(str(checkpoint))
         graph1 = create_supervisor_graph(
-            _refund_llm(order["order_id"]), None, WorkingMemory(redis_url=None), None,
+            _refund_llm(order["order_id"]),
+            None,
+            WorkingMemory(redis_url=None),
+            None,
             checkpointer=AsyncSqliteSaver(conn1),
         )
         config = {"configurable": {"thread_id": "restart-1"}}
@@ -271,16 +315,21 @@ def test_restart_recovery_resumes_from_persistent_checkpoint(isolated_db, tmp_pa
         conn2 = await aiosqlite.connect(str(checkpoint))
         graph2 = create_supervisor_graph(
             FakeLLM([AIMessage(content="客服已批准您的退款申请，感谢耐心等待。")]),
-            None, WorkingMemory(redis_url=None), None,
+            None,
+            WorkingMemory(redis_url=None),
+            None,
             checkpointer=AsyncSqliteSaver(conn2),
         )
         state = await graph2.aget_state(config)
-        assert any(task.interrupts for task in state.tasks), "重启后暂停点应仍在检查点中"
+        assert any(task.interrupts for task in state.tasks), (
+            "重启后暂停点应仍在检查点中"
+        )
 
         refund = svc.list_refunds("user-a")[0]
         svc.record_refund_decision(refund["id"], "approve", "ok", "ops-1")
         resumed = await graph2.ainvoke(
-            Command(resume={"action": "approve", "note": "ok", "operator": "ops"}), config=config
+            Command(resume={"action": "approve", "note": "ok", "operator": "ops"}),
+            config=config,
         )
         assert "批准" in resumed["final_response"]
         await conn2.close()
@@ -307,7 +356,9 @@ def api(isolated_db, monkeypatch, tmp_path):
             self.messages = {}
 
         async def add_message(self, session_id, role, content, user_id=""):
-            self.messages.setdefault(session_id, []).append({"role": role, "content": content})
+            self.messages.setdefault(session_id, []).append(
+                {"role": role, "content": content}
+            )
 
         async def get_history(self, session_id, last_n=None):
             return self.messages.get(session_id, [])
@@ -330,24 +381,66 @@ def api(isolated_db, monkeypatch, tmp_path):
 def test_workbench_requires_agent_or_admin_role(api):
     """角色门控：普通用户访问工作台/授权接口一律 403。"""
     client = TestClient(api)
-    assert client.get("/api/workbench/refunds", headers={"X-Test-Role": "user"}).status_code == 403
-    assert client.get("/api/workbench/refunds", headers={"X-Test-Role": "agent"}).status_code == 200
-    assert client.get("/api/workbench/refunds", headers={"X-Test-Role": "admin"}).status_code == 200
-    assert client.get("/api/workbench/tickets", headers={"X-Test-Role": "user"}).status_code == 403
-    assert client.get("/api/workbench/tickets", headers={"X-Test-Role": "agent"}).status_code == 200
-    assert client.get("/api/workbench/tickets", headers={"X-Test-Role": "admin"}).status_code == 200
-    assert client.post(
-        "/api/admin/users/role", headers={"X-Test-Role": "agent"},
-        json={"username": "nobody", "role": "admin"},
-    ).status_code == 403
-    assert client.post(
-        "/api/admin/users/role", headers={"X-Test-Role": "admin"},
-        json={"username": "no-such-user-xyz", "role": "agent"},
-    ).status_code == 404
-    assert client.post(
-        "/api/admin/users/role", headers={"X-Test-Role": "admin"},
-        json={"username": "nobody", "role": "superuser"},
-    ).status_code == 400
+    assert (
+        client.get(
+            "/api/workbench/refunds", headers={"X-Test-Role": "user"}
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            "/api/workbench/refunds", headers={"X-Test-Role": "agent"}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get(
+            "/api/workbench/refunds", headers={"X-Test-Role": "admin"}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get(
+            "/api/workbench/tickets", headers={"X-Test-Role": "user"}
+        ).status_code
+        == 403
+    )
+    assert (
+        client.get(
+            "/api/workbench/tickets", headers={"X-Test-Role": "agent"}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.get(
+            "/api/workbench/tickets", headers={"X-Test-Role": "admin"}
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/admin/users/role",
+            headers={"X-Test-Role": "agent"},
+            json={"username": "nobody", "role": "admin"},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/admin/users/role",
+            headers={"X-Test-Role": "admin"},
+            json={"username": "no-such-user-xyz", "role": "agent"},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/api/admin/users/role",
+            headers={"X-Test-Role": "admin"},
+            json={"username": "nobody", "role": "superuser"},
+        ).status_code
+        == 400
+    )
 
 
 def test_workbench_lists_and_updates_general_handoff_tickets(api):
@@ -410,10 +503,15 @@ def test_decision_endpoint_updates_state_and_resumes_thread(api, monkeypatch):
     refund = svc.list_refunds("user-a")[0]
     try:
         client = TestClient(api)
-        headers = {"X-Test-Role": "agent", "X-Test-User": "user-a", "X-Test-Name": "ops"}
+        headers = {
+            "X-Test-Role": "agent",
+            "X-Test-User": "user-a",
+            "X-Test-Name": "ops",
+        }
         response = client.post(
             f"/api/workbench/refunds/{refund['id']}/decision",
-            headers=headers, json={"action": "approve", "note": "包装完好"},
+            headers=headers,
+            json={"action": "approve", "note": "包装完好"},
         )
         assert response.status_code == 200
         body = response.json()
@@ -424,12 +522,17 @@ def test_decision_endpoint_updates_state_and_resumes_thread(api, monkeypatch):
 
         # 恢复产生的最终答复进入客户会话历史。
         history = asyncio.run(api_main._session_history(session_id, "user-a"))
-        assert any("批准" in message["content"] for message in history if message["role"] == "assistant")
+        assert any(
+            "批准" in message["content"]
+            for message in history
+            if message["role"] == "assistant"
+        )
 
         # 重复决定：状态机拒绝，不再触发恢复。
         duplicate = client.post(
             f"/api/workbench/refunds/{refund['id']}/decision",
-            headers=headers, json={"action": "reject", "note": ""},
+            headers=headers,
+            json={"action": "reject", "note": ""},
         )
         assert duplicate.status_code == 409
         assert duplicate.json()["detail"]["error"] == "invalid_state"
@@ -445,7 +548,8 @@ def test_decision_on_rest_created_refund_updates_without_resume(api):
     client = TestClient(api)
     response = client.post(
         f"/api/workbench/refunds/{refund['id']}/decision",
-        headers={"X-Test-Role": "agent"}, json={"action": "approve", "note": "ok"},
+        headers={"X-Test-Role": "agent"},
+        json={"action": "approve", "note": "ok"},
     )
     assert response.status_code == 200
     body = response.json()
@@ -461,7 +565,8 @@ def test_need_info_decision_requires_note(api):
     client = TestClient(api)
     response = client.post(
         f"/api/workbench/refunds/{refund['id']}/decision",
-        headers={"X-Test-Role": "agent"}, json={"action": "need_info", "note": "  "},
+        headers={"X-Test-Role": "agent"},
+        json={"action": "need_info", "note": "  "},
     )
     assert response.status_code == 400
     assert response.json()["detail"]["error"] == "note_required"
@@ -470,7 +575,12 @@ def test_need_info_decision_requires_note(api):
 def test_need_info_then_user_can_cancel(isolated_db):
     order = _order_for()
     refund = svc.apply_refund("user-a", order["order_id"], "划痕", "cancel-after-info")
-    assert svc.record_refund_decision(refund["id"], "need_info", "请补充信息", "operator")["status"] == "pending_review"
+    assert (
+        svc.record_refund_decision(refund["id"], "need_info", "请补充信息", "operator")[
+            "status"
+        ]
+        == "pending_review"
+    )
     assert svc.cancel_refund("user-a", refund["id"])["status"] == "cancelled"
 
 
@@ -491,7 +601,9 @@ def test_admin_bootstrap_requires_explicit_local_command(isolated_db, monkeypatc
     monkeypatch.setenv("AUTH_DATABASE_PATH", str(database.DATABASE_PATH))
     result = subprocess.run(
         [sys.executable, "-m", "auth.bootstrap_admin", "local-operator"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0
     assert database.get_user_by_username("local-operator")["role"] == "admin"
@@ -502,11 +614,22 @@ def test_untrusted_tool_cannot_attach_foreign_session(api):
     client = TestClient(api)
     arguments = {
         "name": "refund_apply",
-        "arguments": {"order_id": "anything", "reason": "reason", "idempotency_key": "key", "session_id": "another-users-session"},
+        "arguments": {
+            "order_id": "anything",
+            "reason": "reason",
+            "idempotency_key": "key",
+            "session_id": "another-users-session",
+        },
     }
-    forbidden = client.post("/api/tools/call", headers={"X-Test-User": "user-b"}, json=arguments)
+    forbidden = client.post(
+        "/api/tools/call", headers={"X-Test-User": "user-b"}, json=arguments
+    )
     assert forbidden.status_code == 403
-    response = client.post("/api/tools/call", headers={"X-Test-User": "user-b", "X-Test-Role": "agent"}, json=arguments)
+    response = client.post(
+        "/api/tools/call",
+        headers={"X-Test-User": "user-b", "X-Test-Role": "agent"},
+        json=arguments,
+    )
     assert response.status_code == 400
 
 
@@ -516,19 +639,38 @@ def test_rest_request_need_info_and_review_can_complete(api):
     refund = svc.apply_refund("user-a", order["order_id"], "reason", "rest-info")
     headers = {"X-Test-Role": "agent"}
     decision_url = f"/api/workbench/refunds/{refund['id']}/decision"
-    first = client.post(decision_url, headers=headers, json={"action": "need_info", "note": "Please describe packaging"})
+    first = client.post(
+        decision_url,
+        headers=headers,
+        json={"action": "need_info", "note": "Please describe packaging"},
+    )
     assert first.status_code == 200
     assert svc.list_refunds("user-a")[0]["ticket_status"] == "processing"
-    other = client.post(f"/api/refunds/{refund['id']}/information", headers={"X-Test-User": "user-b"}, json={"content": "sealed"})
+    other = client.post(
+        f"/api/refunds/{refund['id']}/information",
+        headers={"X-Test-User": "user-b"},
+        json={"content": "sealed"},
+    )
     assert other.status_code == 404
-    answer = client.post(f"/api/refunds/{refund['id']}/information", json={"content": "sealed"})
+    answer = client.post(
+        f"/api/refunds/{refund['id']}/information", json={"content": "sealed"}
+    )
     assert answer.status_code == 200
-    detail = client.get(f"/api/workbench/refunds/{refund['id']}", headers=headers).json()
+    detail = client.get(
+        f"/api/workbench/refunds/{refund['id']}", headers=headers
+    ).json()
     assert detail["customer_updates"][0]["content"] == "sealed"
-    assert client.post(decision_url, headers=headers, json={"action": "approve", "note": "ok"}).json()["refund"]["status"] == "approved"
+    assert (
+        client.post(
+            decision_url, headers=headers, json={"action": "approve", "note": "ok"}
+        ).json()["refund"]["status"]
+        == "approved"
+    )
 
 
-def test_resume_failure_is_retryable_and_notification_is_not_duplicated(api, monkeypatch):
+def test_resume_failure_is_retryable_and_notification_is_not_duplicated(
+    api, monkeypatch
+):
     order = _order_for()
     real_graph, config, session_id = _pause_graph(order["order_id"])
     refund = svc.list_refunds("user-a")[0]
@@ -549,7 +691,11 @@ def test_resume_failure_is_retryable_and_notification_is_not_duplicated(api, mon
     monkeypatch.setattr(api_main, "graph", FailOnce())
     client = TestClient(api)
     headers = {"X-Test-Role": "agent"}
-    decision = client.post(f"/api/workbench/refunds/{refund['id']}/decision", headers=headers, json={"action": "approve", "note": "ok"})
+    decision = client.post(
+        f"/api/workbench/refunds/{refund['id']}/decision",
+        headers=headers,
+        json={"action": "approve", "note": "ok"},
+    )
     assert decision.status_code == 200 and decision.json()["resume_pending"] is True
     assert svc.get_handoff(refund["id"])["status"] == "pending"
     url = f"/api/workbench/refunds/{refund['id']}/resume"
@@ -570,14 +716,19 @@ def test_cancel_resumes_the_matching_paused_session(api, monkeypatch):
     assert response.status_code == 200 and response.json()["status"] == "cancelled"
     assert response.json()["resume_pending"] is False
     assert not asyncio.run(graph.aget_state(config)).next
-    assert any("撤回" in message["content"] for message in asyncio.run(api_main._session_history(session_id, "user-a")))
+    assert any(
+        "撤回" in message["content"]
+        for message in asyncio.run(api_main._session_history(session_id, "user-a"))
+    )
 
 
 def test_chat_does_not_replace_pending_human_checkpoint(api, monkeypatch):
     order = _order_for()
     graph, config, session_id = _pause_graph(order["order_id"])
     monkeypatch.setattr(api_main, "graph", graph)
-    response = TestClient(api).post("/api/chat", json={"session_id": session_id, "message": "hello"})
+    response = TestClient(api).post(
+        "/api/chat", json={"session_id": session_id, "message": "hello"}
+    )
     assert response.status_code == 409
     assert asyncio.run(graph.aget_state(config)).next == ("human_review",)
 
@@ -585,14 +736,20 @@ def test_chat_does_not_replace_pending_human_checkpoint(api, monkeypatch):
 def test_reusing_rest_refund_does_not_pause_an_unlinked_thread(isolated_db):
     order = _order_for()
     svc.apply_refund("user-a", order["order_id"], "划痕", "rest-first")
-    graph = create_supervisor_graph(_refund_llm(order["order_id"]), None, WorkingMemory(redis_url=None), None)
+    graph = create_supervisor_graph(
+        _refund_llm(order["order_id"]), None, WorkingMemory(redis_url=None), None
+    )
     config = {"configurable": {"thread_id": "unlinked-session"}}
-    result = asyncio.run(graph.ainvoke(_initial_state("unlinked-session"), config=config))
+    result = asyncio.run(
+        graph.ainvoke(_initial_state("unlinked-session"), config=config)
+    )
     assert not result.get("__interrupt__")
     assert svc.list_refunds("user-a")[0]["session_id"] == ""
 
 
-def test_human_question_user_reply_then_approve_resumes_original_graph(api, monkeypatch):
+def test_human_question_user_reply_then_approve_resumes_original_graph(
+    api, monkeypatch
+):
     order = _order_for()
     graph, config, session_id = _pause_graph(order["order_id"])
     monkeypatch.setattr(api_main, "graph", graph)
@@ -600,16 +757,27 @@ def test_human_question_user_reply_then_approve_resumes_original_graph(api, monk
     client = TestClient(api)
     staff = {"X-Test-Role": "agent"}
     decision_url = f"/api/workbench/refunds/{refund['id']}/decision"
-    ask = client.post(decision_url, headers=staff, json={"action": "need_info", "note": "Packaging?"})
+    ask = client.post(
+        decision_url, headers=staff, json={"action": "need_info", "note": "Packaging?"}
+    )
     assert ask.status_code == 200 and ask.json()["resumed"] is False
-    duplicate = client.post(decision_url, headers=staff, json={"action": "need_info", "note": "Packaging?"})
+    duplicate = client.post(
+        decision_url, headers=staff, json={"action": "need_info", "note": "Packaging?"}
+    )
     assert duplicate.status_code == 200 and duplicate.json()["refund"]["reused"] is True
     assert len(svc.list_refund_actions(refund["id"])) == 1
     assert asyncio.run(graph.aget_state(config)).next == ("human_review",)
-    assert any("Packaging?" in item["content"] for item in asyncio.run(api_main._session_history(session_id, "user-a")))
-    reply = client.post(f"/api/refunds/{refund['id']}/information", json={"content": "Unopened"})
+    assert any(
+        "Packaging?" in item["content"]
+        for item in asyncio.run(api_main._session_history(session_id, "user-a"))
+    )
+    reply = client.post(
+        f"/api/refunds/{refund['id']}/information", json={"content": "Unopened"}
+    )
     assert reply.status_code == 200
-    approved = client.post(decision_url, headers=staff, json={"action": "approve", "note": "ok"})
+    approved = client.post(
+        decision_url, headers=staff, json={"action": "approve", "note": "ok"}
+    )
     assert approved.status_code == 200 and approved.json()["resumed"] is True
     assert not asyncio.run(graph.aget_state(config)).next
 
@@ -619,11 +787,22 @@ def test_foreign_legacy_session_cannot_be_read_or_approved(api):
 
     save_session_owner("other-session", "user-b")
     order = _order_for()
-    refund = svc.apply_refund("user-a", order["order_id"], "reason", "key", "other-session")
+    refund = svc.apply_refund(
+        "user-a", order["order_id"], "reason", "key", "other-session"
+    )
     client = TestClient(api)
     headers = {"X-Test-Role": "agent"}
-    assert client.get(f"/api/workbench/refunds/{refund['id']}", headers=headers).status_code == 409
-    decision = client.post(f"/api/workbench/refunds/{refund['id']}/decision", headers=headers, json={"action": "approve"})
+    assert (
+        client.get(
+            f"/api/workbench/refunds/{refund['id']}", headers=headers
+        ).status_code
+        == 409
+    )
+    decision = client.post(
+        f"/api/workbench/refunds/{refund['id']}/decision",
+        headers=headers,
+        json={"action": "approve"},
+    )
     assert decision.status_code == 409
     assert svc.list_refunds("user-a")[0]["status"] == "pending_review"
 
@@ -662,17 +841,25 @@ def test_checkpoint_completed_before_notice_can_be_retried(api, monkeypatch):
     refund = svc.list_refunds("user-a")[0]
     staff = {"X-Test-Role": "agent"}
     client = TestClient(api)
-    first = client.post(f"/api/workbench/refunds/{refund['id']}/decision", headers=staff, json={"action": "approve", "note": "ok"})
+    first = client.post(
+        f"/api/workbench/refunds/{refund['id']}/decision",
+        headers=staff,
+        json={"action": "approve", "note": "ok"},
+    )
     assert first.json()["resume_pending"] is True
     assert not asyncio.run(graph.aget_state(config)).next
-    blocked = client.post("/api/chat", json={"session_id": session_id, "message": "hello"})
+    blocked = client.post(
+        "/api/chat", json={"session_id": session_id, "message": "hello"}
+    )
     assert blocked.status_code == 409
     retry = client.post(f"/api/workbench/refunds/{refund['id']}/resume", headers=staff)
     assert retry.json()["resumed"] is True
     assert len(asyncio.run(api_main._session_history(session_id, "user-a"))) == 1
 
 
-def test_mismatched_refund_cannot_resume_another_paused_thread(api, monkeypatch, isolated_db):
+def test_mismatched_refund_cannot_resume_another_paused_thread(
+    api, monkeypatch, isolated_db
+):
     import sqlite3
 
     order = _order_for()
@@ -680,15 +867,27 @@ def test_mismatched_refund_cannot_resume_another_paused_thread(api, monkeypatch,
     monkeypatch.setattr(api_main, "graph", graph)
     original = svc.list_refunds("user-a")[0]
     with sqlite3.connect(isolated_db) as db:
-        db.execute("INSERT INTO orders (id, user_id, status, amount_cents, delivered_at, product) VALUES (?, ?, 'delivered', 100, ?, ?)",
-                   ("another-order", "user-a", order["delivered_at"], "sample"))
+        db.execute(
+            "INSERT INTO orders (id, user_id, status, amount_cents, delivered_at, product) VALUES (?, ?, 'delivered', 100, ?, ?)",
+            ("another-order", "user-a", order["delivered_at"], "sample"),
+        )
     other = svc.apply_refund("user-a", "another-order", "reason", "other-key")
     with sqlite3.connect(isolated_db) as db:
-        db.execute("UPDATE refund_requests SET session_id = ? WHERE id = ?", (session_id, other["id"]))
-    response = TestClient(api).post(f"/api/workbench/refunds/{other['id']}/decision", headers={"X-Test-Role": "agent"}, json={"action": "approve"})
+        db.execute(
+            "UPDATE refund_requests SET session_id = ? WHERE id = ?",
+            (session_id, other["id"]),
+        )
+    response = TestClient(api).post(
+        f"/api/workbench/refunds/{other['id']}/decision",
+        headers={"X-Test-Role": "agent"},
+        json={"action": "approve"},
+    )
     assert response.status_code == 409
     assert svc.get_refund_review(other["id"])["status"] == "pending_review"
-    assert asyncio.run(graph.aget_state(config)).values["pending_handoff"]["refund_id"] == original["id"]
+    assert (
+        asyncio.run(graph.aget_state(config)).values["pending_handoff"]["refund_id"]
+        == original["id"]
+    )
 
 
 def test_first_registration_role_and_live_role_update(isolated_db, monkeypatch):
@@ -699,13 +898,21 @@ def test_first_registration_role_and_live_role_update(isolated_db, monkeypatch):
     user = create_user("staff-test", "test-password")
     assert user["role"] == "user"
     client = TestClient(app)
-    assert client.post("/api/auth/login", json={"username": "staff-test", "password": "test-password"}).status_code == 200
+    assert (
+        client.post(
+            "/api/auth/login",
+            json={"username": "staff-test", "password": "test-password"},
+        ).status_code
+        == 200
+    )
     assert client.get("/api/workbench/refunds").status_code == 403
     set_user_role("staff-test", "agent")
     assert client.get("/api/workbench/refunds").status_code == 200
 
 
-def test_persistent_checkpointer_failure_is_not_silently_downgraded(tmp_path, monkeypatch):
+def test_persistent_checkpointer_failure_is_not_silently_downgraded(
+    tmp_path, monkeypatch
+):
     import agents.supervisor as supervisor
 
     monkeypatch.setattr(supervisor, "CHECKPOINT_PATH", tmp_path)
@@ -730,7 +937,12 @@ def test_concurrent_session_claims_allow_only_one_winner(isolated_db):
 
     _order_for()
     with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(lambda i: svc.claim_session_turn("shared-session", f"token-{i}"), range(8)))
+        results = list(
+            pool.map(
+                lambda i: svc.claim_session_turn("shared-session", f"token-{i}"),
+                range(8),
+            )
+        )
     assert sum(results) == 1
 
 
@@ -740,7 +952,14 @@ def test_concurrent_opposing_decisions_record_only_one(isolated_db):
     order = _order_for()
     refund = svc.apply_refund("user-a", order["order_id"], "reason", "key")
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda action: svc.record_refund_decision(refund["id"], action, "", "operator"), ("approve", "reject")))
+        results = list(
+            pool.map(
+                lambda action: svc.record_refund_decision(
+                    refund["id"], action, "", "operator"
+                ),
+                ("approve", "reject"),
+            )
+        )
     assert sum("error" not in result for result in results) == 1
     assert sum(result.get("error") == "invalid_state" for result in results) == 1
     assert len(svc.list_refund_actions(refund["id"])) == 1
@@ -752,16 +971,24 @@ def test_expired_leases_cannot_release_or_complete_new_claim(isolated_db):
     order = _order_for()
     assert svc.claim_session_turn("lease-session", "old-token")
     with sqlite3.connect(isolated_db) as db:
-        db.execute("UPDATE session_turn_locks SET expires_at = '2000-01-01T00:00:00+00:00' WHERE session_id = ?", ("lease-session",))
+        db.execute(
+            "UPDATE session_turn_locks SET expires_at = '2000-01-01T00:00:00+00:00' WHERE session_id = ?",
+            ("lease-session",),
+        )
     assert svc.claim_session_turn("lease-session", "new-token")
     svc.release_session_turn("lease-session", "old-token")
     assert not svc.claim_session_turn("lease-session", "third-token")
 
-    refund = svc.apply_refund("user-a", order["order_id"], "reason", "key", "lease-session")
+    refund = svc.apply_refund(
+        "user-a", order["order_id"], "reason", "key", "lease-session"
+    )
     svc.record_refund_decision(refund["id"], "approve", "", "operator")
     first = svc.claim_handoff(refund["id"])
     with sqlite3.connect(isolated_db) as db:
-        db.execute("UPDATE handoff_outbox SET claimed_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (first["id"],))
+        db.execute(
+            "UPDATE handoff_outbox SET claimed_at = '2000-01-01T00:00:00+00:00' WHERE id = ?",
+            (first["id"],),
+        )
     second = svc.claim_handoff(refund["id"])
     assert second["claimed_at"] != first["claimed_at"]
     assert not svc.finish_handoff(first["id"], first["claimed_at"], "old")
@@ -771,27 +998,52 @@ def test_expired_leases_cannot_release_or_complete_new_claim(isolated_db):
 def test_approved_order_cannot_start_another_refund(isolated_db):
     order = _order_for()
     first = svc.apply_refund("user-a", order["order_id"], "reason", "key-1")
-    assert svc.record_refund_decision(first["id"], "approve", "", "operator")["status"] == "approved"
-    assert svc.apply_refund("user-a", order["order_id"], "reason", "key-2")["error"] == "already_approved"
-    assert svc.apply_refund("user-a", order["order_id"], "reason", "key-1")["id"] == first["id"]
+    assert (
+        svc.record_refund_decision(first["id"], "approve", "", "operator")["status"]
+        == "approved"
+    )
+    assert (
+        svc.apply_refund("user-a", order["order_id"], "reason", "key-2")["error"]
+        == "already_approved"
+    )
+    assert (
+        svc.apply_refund("user-a", order["order_id"], "reason", "key-1")["id"]
+        == first["id"]
+    )
 
 
 def test_sse_chat_pause_then_staff_approval_is_visible_in_history(api, monkeypatch):
     order = _order_for()
-    graph = create_supervisor_graph(_refund_llm(order["order_id"]), None, WorkingMemory(redis_url=""), None)
+    graph = create_supervisor_graph(
+        _refund_llm(order["order_id"]), None, WorkingMemory(redis_url=""), None
+    )
     monkeypatch.setattr(api_main, "graph", graph)
     client = TestClient(api)
     session_id = "sse-session"
-    response = client.post("/api/chat/stream", json={"session_id": session_id, "message": "申请退款"})
+    response = client.post(
+        "/api/chat/stream", json={"session_id": session_id, "message": "申请退款"}
+    )
     assert response.status_code == 200
-    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    events = [
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
     final = next(event for event in events if event.get("event") == "final")
     assert final["awaiting_human"] is True
     refund = svc.list_refunds("user-a")[0]
-    review = client.post(f"/api/workbench/refunds/{refund['id']}/decision", headers={"X-Test-Role": "agent"}, json={"action": "approve", "note": "ok"})
+    review = client.post(
+        f"/api/workbench/refunds/{refund['id']}/decision",
+        headers={"X-Test-Role": "agent"},
+        json={"action": "approve", "note": "ok"},
+    )
     assert review.status_code == 200 and review.json()["resumed"] is True
     history = client.get(f"/api/history/{session_id}").json()["messages"]
-    assert any("批准" in message["content"] for message in history if message["role"] == "assistant")
+    assert any(
+        "批准" in message["content"]
+        for message in history
+        if message["role"] == "assistant"
+    )
 
 
 def test_staff_can_rebuild_pause_after_ticket_node_crashes(api, monkeypatch):
@@ -808,7 +1060,9 @@ def test_staff_can_rebuild_pause_after_ticket_node_crashes(api, monkeypatch):
         raise RuntimeError("simulated crash before graph checkpoint")
 
     monkeypatch.setattr(TicketHandlerAgent, "process", fail_after_creation)
-    graph = create_supervisor_graph(_refund_llm(order["order_id"]), None, WorkingMemory(redis_url=None), None)
+    graph = create_supervisor_graph(
+        _refund_llm(order["order_id"]), None, WorkingMemory(redis_url=None), None
+    )
     config = {"configurable": {"thread_id": session_id}}
     with pytest.raises(RuntimeError, match="simulated crash"):
         asyncio.run(graph.ainvoke(_initial_state(session_id), config=config))
@@ -817,13 +1071,21 @@ def test_staff_can_rebuild_pause_after_ticket_node_crashes(api, monkeypatch):
     monkeypatch.setattr(api_main, "graph", graph)
     client = TestClient(api)
     staff = {"X-Test-Role": "agent"}
-    blocked = client.post("/api/chat", json={"session_id": session_id, "message": "hello"})
+    blocked = client.post(
+        "/api/chat", json={"session_id": session_id, "message": "hello"}
+    )
     assert blocked.status_code == 409
-    prepared = client.post(f"/api/workbench/refunds/{refund['id']}/prepare", headers=staff)
+    prepared = client.post(
+        f"/api/workbench/refunds/{refund['id']}/prepare", headers=staff
+    )
     assert prepared.status_code == 200 and prepared.json()["prepared"] is True
     state = asyncio.run(graph.aget_state(config))
     assert state.next == ("human_review",)
-    decision = client.post(f"/api/workbench/refunds/{refund['id']}/decision", headers=staff, json={"action": "approve", "note": "ok"})
+    decision = client.post(
+        f"/api/workbench/refunds/{refund['id']}/decision",
+        headers=staff,
+        json={"action": "approve", "note": "ok"},
+    )
     assert decision.status_code == 200 and decision.json()["resumed"] is True
 
 
@@ -839,9 +1101,17 @@ def test_pending_outbox_survives_restart_and_resumes_once(api, monkeypatch, tmp_
 
     async def scenario():
         conn1 = await aiosqlite.connect(str(checkpoint))
-        graph1 = create_supervisor_graph(_refund_llm(order["order_id"]), None, WorkingMemory(redis_url=None), None, checkpointer=AsyncSqliteSaver(conn1))
+        graph1 = create_supervisor_graph(
+            _refund_llm(order["order_id"]),
+            None,
+            WorkingMemory(redis_url=None),
+            None,
+            checkpointer=AsyncSqliteSaver(conn1),
+        )
         config = {"configurable": {"thread_id": session_id}}
-        assert (await graph1.ainvoke(_initial_state(session_id), config=config)).get("__interrupt__")
+        assert (await graph1.ainvoke(_initial_state(session_id), config=config)).get(
+            "__interrupt__"
+        )
         refund = svc.list_refunds("user-a")[0]
         svc.record_refund_decision(refund["id"], "approve", "ok", "operator")
         monkeypatch.setattr(api_main, "graph", None)
@@ -850,7 +1120,13 @@ def test_pending_outbox_survives_restart_and_resumes_once(api, monkeypatch, tmp_
 
         conn2 = await aiosqlite.connect(str(checkpoint))
         try:
-            graph2 = create_supervisor_graph(FakeLLM([AIMessage(content="unused")]), None, WorkingMemory(redis_url=None), None, checkpointer=AsyncSqliteSaver(conn2))
+            graph2 = create_supervisor_graph(
+                FakeLLM([AIMessage(content="unused")]),
+                None,
+                WorkingMemory(redis_url=None),
+                None,
+                checkpointer=AsyncSqliteSaver(conn2),
+            )
             monkeypatch.setattr(api_main, "graph", graph2)
             assert (await api_main._resume_handoff(refund["id"]))["resumed"] is True
             assert (await api_main._resume_handoff(refund["id"]))["resumed"] is True
@@ -882,10 +1158,16 @@ def test_login_and_register_responses_include_role(isolated_db, monkeypatch):
     api_main_reloaded = importlib.reload(api_main)
     client = TestClient(api_main_reloaded.app)
 
-    login = client.post("/api/auth/login", json={"username": "role_check_user", "password": "Secret#123"})
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "role_check_user", "password": "Secret#123"},
+    )
     assert login.status_code == 200
     assert login.json()["user"]["role"] == "agent", "登录响应必须包含实时角色"
 
-    reg = client.post("/api/auth/register", json={"username": "role_check_new", "password": "Secret#123"})
+    reg = client.post(
+        "/api/auth/register",
+        json={"username": "role_check_new", "password": "Secret#123"},
+    )
     assert reg.status_code in (200, 201)
     assert reg.json()["user"]["role"] == "user"

@@ -68,7 +68,9 @@ def test_regular_user_is_forbidden(isolated_auth, method, path):
     """普通用户访问运维接口必须 403（后端门控，不只靠前端隐藏）。"""
     client = TestClient(isolated_auth.app)
     token = _register(client, f"user_{path.strip('/').replace('/', '_')}")
-    response = client.request(method, path, headers={"Authorization": f"Bearer {token}"})
+    response = client.request(
+        method, path, headers={"Authorization": f"Bearer {token}"}
+    )
     assert response.status_code == 403
 
 
@@ -76,8 +78,12 @@ def test_regular_user_is_forbidden(isolated_auth, method, path):
 def test_agent_is_allowed(isolated_auth, method, path):
     """客服可以查看工具列表与运行指标。"""
     client = TestClient(isolated_auth.app)
-    token = _make_user_with_role(client, f"agent_{path.strip('/').replace('/', '_')}", "agent")
-    response = client.request(method, path, headers={"Authorization": f"Bearer {token}"})
+    token = _make_user_with_role(
+        client, f"agent_{path.strip('/').replace('/', '_')}", "agent"
+    )
+    response = client.request(
+        method, path, headers={"Authorization": f"Bearer {token}"}
+    )
     assert response.status_code == 200
 
 
@@ -85,8 +91,12 @@ def test_agent_is_allowed(isolated_auth, method, path):
 def test_admin_is_allowed(isolated_auth, method, path):
     """管理员可以查看工具列表与运行指标。"""
     client = TestClient(isolated_auth.app)
-    token = _make_user_with_role(client, f"admin_{path.strip('/').replace('/', '_')}", "admin")
-    response = client.request(method, path, headers={"Authorization": f"Bearer {token}"})
+    token = _make_user_with_role(
+        client, f"admin_{path.strip('/').replace('/', '_')}", "admin"
+    )
+    response = client.request(
+        method, path, headers={"Authorization": f"Bearer {token}"}
+    )
     assert response.status_code == 200
 
 
@@ -145,11 +155,15 @@ def test_logout_with_both_cookie_and_bearer_revokes_both(isolated_auth):
     )
 
     assert (
-        client.get("/api/auth/me", headers={"Authorization": f"Bearer {bearer}"}).status_code
+        client.get(
+            "/api/auth/me", headers={"Authorization": f"Bearer {bearer}"}
+        ).status_code
         == 401
     ), "Bearer 令牌应被吊销"
     assert (
-        client.get("/api/auth/me", headers={"Authorization": f"Bearer {cookie_token}"}).status_code
+        client.get(
+            "/api/auth/me", headers={"Authorization": f"Bearer {cookie_token}"}
+        ).status_code
         == 401
     ), "Cookie 令牌也应被吊销（不留可用残余）"
 

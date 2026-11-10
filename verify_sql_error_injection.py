@@ -29,9 +29,11 @@ def main() -> int:
     print("MySQL 自检通过（真实环境）")
 
     # 1. 创建受限用户（仅 SELECT），确定性制造"执行期"SQL 错误。
-    admin = pymysql.connect(**{
-        **{k: v for k, v in mysql_store._config().items() if k != "charset"},
-    })
+    admin = pymysql.connect(
+        **{
+            **{k: v for k, v in mysql_store._config().items() if k != "charset"},
+        }
+    )
     with admin.cursor() as cursor:
         cursor.execute(
             "CREATE USER IF NOT EXISTS 'limited'@'%' IDENTIFIED BY 'limited_pw'"
@@ -61,7 +63,9 @@ def main() -> int:
     # 3. 执行期错误必须转为 MySQLUnavailableError（而非裸 OperationalError）。
     converted = False
     try:
-        limited.add_message("sess-inject", "user", {"role": "user", "content": "注入测试"})
+        limited.add_message(
+            "sess-inject", "user", {"role": "user", "content": "注入测试"}
+        )
     except MySQLUnavailableError as exc:
         converted = True
         print(f"执行期 SQL 错误已转换: {exc}")

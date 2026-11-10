@@ -105,7 +105,11 @@ def list_tickets(limit: int = 100, offset: int = 0, status: str = "") -> list[di
         ).fetchall()
         tickets = [json.loads(row[0]) for row in rows]
         if status:
-            tickets = [ticket for ticket in tickets if ticket.get("status", "created") == status]
+            tickets = [
+                ticket
+                for ticket in tickets
+                if ticket.get("status", "created") == status
+            ]
         tickets.sort(key=lambda ticket: ticket.get("created_at", ""), reverse=True)
         return tickets[offset : offset + limit]
     finally:

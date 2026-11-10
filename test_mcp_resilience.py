@@ -15,12 +15,8 @@ def test_local_ticket_create_is_idempotent():
 
 def test_mcp_ticket_create_is_idempotent():
     key = "test-mcp-idempotency"
-    first = asyncio.run(
-        mcp_ticket_create("测试工单", "描述", idempotency_key=key)
-    )
-    second = asyncio.run(
-        mcp_ticket_create("测试工单", "描述", idempotency_key=key)
-    )
+    first = asyncio.run(mcp_ticket_create("测试工单", "描述", idempotency_key=key))
+    second = asyncio.run(mcp_ticket_create("测试工单", "描述", idempotency_key=key))
 
     assert second["ticket_id"] == first["ticket_id"]
     assert second["reused"] is True

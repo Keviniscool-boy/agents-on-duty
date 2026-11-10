@@ -68,7 +68,9 @@ export function createKnowledgeSearchTool(
       const hits = data.hits ?? [];
       options.onHits?.(hits);
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(hits, null, 2) }],
+        content: [
+          { type: "text" as const, text: JSON.stringify(hits, null, 2) },
+        ],
         details: { hits: hits.length },
       };
     },

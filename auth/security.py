@@ -35,6 +35,7 @@ def set_auth_cookie(response, token: str) -> None:
 def clear_auth_cookie(response) -> None:
     response.delete_cookie(key=COOKIE_NAME, path="/")
 
+
 # 历史版本的默认密钥：即使被写入环境也视为未配置（B1）。
 _DEPRECATED_DEFAULT_SECRET = "change-this-development-secret"
 
@@ -78,6 +79,7 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> dict:
     from auth.database import get_user_by_id, is_token_revoked
+
     # B10：优先 httpOnly Cookie，回退 Bearer 头（评测脚本/CLI 兼容）。
     if credentials is not None and credentials.scheme.lower() == "bearer":
         token = credentials.credentials

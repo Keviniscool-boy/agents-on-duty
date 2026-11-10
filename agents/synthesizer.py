@@ -23,7 +23,11 @@ class SynthesizerAgent:
                 "cancel": "您的退款申请已撤回。",
             }
             note = str(decision.get("note") or "").strip()[:500]
-            suffix = f" 客服说明：{note}" if note and action in {"reject", "need_info"} else ""
+            suffix = (
+                f" 客服说明：{note}"
+                if note and action in {"reject", "need_info"}
+                else ""
+            )
             return {"final_response": messages[action] + suffix}
         if state.get("current_agent") == "fallback":
             return {
@@ -33,7 +37,9 @@ class SynthesizerAgent:
         # 固定业务话术（如确定性转人工的工单确认）原样透传：
         # 不再让 LLM 重排，避免弄丢工单号/状态，也省一次模型调用。
         # 与合规节点同款判定：仅当最终回复与产生它的固定话术完全一致时豁免。
-        if state.get("sub_results", {}).get("fixed_reply") == state.get("final_response", ""):
+        if state.get("sub_results", {}).get("fixed_reply") == state.get(
+            "final_response", ""
+        ):
             return {"final_response": state.get("final_response", "")}
 
         if not state.get("compliance_passed", False):
@@ -68,8 +74,7 @@ class SynthesizerAgent:
             ),
             HumanMessage(
                 content=(
-                    f"用户问题：{user_message}\n\n"
-                    f"业务 Agent 结果：\n{business_result}"
+                    f"用户问题：{user_message}\n\n业务 Agent 结果：\n{business_result}"
                 )
             ),
         ]

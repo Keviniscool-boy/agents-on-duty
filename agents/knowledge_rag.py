@@ -77,7 +77,9 @@ class KnowledgeRAGAgent:
             top_k=3,
         )
 
-        top_score = max((float(item.get("score", 0.0)) for item in results), default=0.0)
+        top_score = max(
+            (float(item.get("score", 0.0)) for item in results), default=0.0
+        )
         if not results or top_score < MIN_ANSWER_SCORE:
             message = REFUSAL_MESSAGE if not results else LOW_CONFIDENCE_MESSAGE
             return {
@@ -94,8 +96,7 @@ class KnowledgeRAGAgent:
 
         # 将检索到的原文和来源拼接为 LLM 的参考资料。
         context = "\n\n".join(
-            f"来源：{result['source']}\n内容：{result['content']}"
-            for result in results
+            f"来源：{result['source']}\n内容：{result['content']}" for result in results
         )
 
         # R3：检索原文属于不可信外部数据，放在 human 消息并明确声明

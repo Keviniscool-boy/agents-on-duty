@@ -53,7 +53,9 @@ def _check(name: str, passed: bool, detail="") -> dict:
 
 
 def check_manifest() -> dict:
-    manifest = json.loads((EVALUATION_DIR / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (EVALUATION_DIR / "manifest.json").read_text(encoding="utf-8")
+    )
     covered = set()
     for suite in manifest["suites"].values():
         covered.update(suite.get("scenarios", []))
@@ -64,7 +66,9 @@ def check_manifest() -> dict:
 def check_policy_metadata(tmp: str) -> dict:
     memory = LongTermMemory(index_path=str(Path(tmp) / "index"))
     memory.embeddings = KeywordishEmbeddings()
-    count = asyncio.run(memory.load_knowledge_base(str(PROJECT_ROOT / "knowledge_base")))
+    count = asyncio.run(
+        memory.load_knowledge_base(str(PROJECT_ROOT / "knowledge_base"))
+    )
     doc_ids = {document["metadata"].get("doc_id") for document in memory.documents}
     missing = sorted(EXPECTED_DOC_IDS - doc_ids)
     return _check(
@@ -81,17 +85,26 @@ def check_hybrid(tmp: str) -> dict:
     asyncio.run(memory.add_document("gamma beta policy", source="gamma", metadata={}))
     results = asyncio.run(memory.search("beta", top_k=5, min_score=0.55))
     sources = [result["source"] for result in results]
-    return _check("hybrid_retrieval", "alpha" in sources and "gamma" in sources, sources)
+    return _check(
+        "hybrid_retrieval", "alpha" in sources and "gamma" in sources, sources
+    )
 
 
 def check_refusal_and_handoff() -> dict:
     agent = KnowledgeRAGAgent(FakeLLM(["query"]), EmptyMemory())
-    result = asyncio.run(agent.process({
-        "messages": [HumanMessage(content="退款政策是什么")],
-        "sub_results": {},
-    }))
+    result = asyncio.run(
+        agent.process(
+            {
+                "messages": [HumanMessage(content="退款政策是什么")],
+                "sub_results": {},
+            }
+        )
+    )
     sub = result["sub_results"]
-    passed = sub.get("knowledge_decision") == "refuse" and sub.get("handoff_required") is True
+    passed = (
+        sub.get("knowledge_decision") == "refuse"
+        and sub.get("handoff_required") is True
+    )
     return _check("refusal_and_handoff", passed, sub)
 
 
@@ -114,8 +127,16 @@ def check_metrics() -> dict:
         "请联系人工客服。",
         {"handoff_required": True},
     )
-    passed = all(answer.values()) and refuse["refusal_correct"] and handoff["handoff_correct"]
-    return _check("metrics_scoring", passed, {"answer": answer, "refuse": refuse, "handoff": handoff})
+    passed = (
+        all(answer.values())
+        and refuse["refusal_correct"]
+        and handoff["handoff_correct"]
+    )
+    return _check(
+        "metrics_scoring",
+        passed,
+        {"answer": answer, "refuse": refuse, "handoff": handoff},
+    )
 
 
 def run_checks() -> list[dict]:

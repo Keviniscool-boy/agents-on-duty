@@ -13,7 +13,9 @@ _trace = contextvars.ContextVar("admin_audit_trace", default=None)
 
 @contextmanager
 def trace_scope(trace_id: str, actor_id: str, session_id: str):
-    token = _trace.set({"trace_id": trace_id, "actor_id": actor_id, "session_id": session_id})
+    token = _trace.set(
+        {"trace_id": trace_id, "actor_id": actor_id, "session_id": session_id}
+    )
     try:
         yield
     finally:
@@ -24,7 +26,18 @@ def current_trace():
     return _trace.get()
 
 
-def record_event(*, kind: str, action: str, outcome: str, actor_id: str = "", target_id: str = "", session_id: str = "", trace_id: str = "", duration_ms: float | None = None, detail: str = "") -> None:
+def record_event(
+    *,
+    kind: str,
+    action: str,
+    outcome: str,
+    actor_id: str = "",
+    target_id: str = "",
+    session_id: str = "",
+    trace_id: str = "",
+    duration_ms: float | None = None,
+    detail: str = "",
+) -> None:
     """只写入调用方指定的标识与固定状态码，绝不落请求正文。"""
     try:
         with closing(_connection()) as connection, connection:
@@ -32,14 +45,28 @@ def record_event(*, kind: str, action: str, outcome: str, actor_id: str = "", ta
                 """INSERT INTO admin_events
                    (created_at, kind, action, outcome, actor_id, target_id, session_id, trace_id, duration_ms, detail)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (datetime.now(timezone.utc).isoformat(), kind, action, outcome, actor_id,
-                 target_id, session_id, trace_id, duration_ms, detail),
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    kind,
+                    action,
+                    outcome,
+                    actor_id,
+                    target_id,
+                    session_id,
+                    trace_id,
+                    duration_ms,
+                    detail,
+                ),
             )
     except Exception as exc:
-        logger.warning("Administrator runtime record unavailable (%s)", type(exc).__name__)
+        logger.warning(
+            "Administrator runtime record unavailable (%s)", type(exc).__name__
+        )
 
 
-def list_events(limit: int, offset: int = 0, kind: str = "", trace_id: str = "") -> list[dict]:
+def list_events(
+    limit: int, offset: int = 0, kind: str = "", trace_id: str = ""
+) -> list[dict]:
     with closing(_connection()) as connection:
         rows = connection.execute(
             """SELECT id, created_at, kind, action, outcome, actor_id, target_id,
@@ -60,7 +87,7 @@ def list_runs(limit: int, offset: int = 0) -> list[dict]:
                       SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) AS error_count,
                       SUM(CASE WHEN outcome = 'fallback' THEN 1 ELSE 0 END) AS fallback_count
                FROM admin_events WHERE trace_id != '' GROUP BY trace_id
-               ORDER BY MAX(id) DESC LIMIT ? OFFSET ?""", (limit, offset),
+               ORDER BY MAX(id) DESC LIMIT ? OFFSET ?""",
+            (limit, offset),
         ).fetchall()
     return [dict(row) for row in rows]
-

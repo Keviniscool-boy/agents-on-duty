@@ -11,13 +11,30 @@ def _fallback_response(message: str) -> str:
     if not text:
         return "我在这儿。你可以说说需要查询订单、咨询退款/售后政策，还是办理售后。"
 
-    if text in {"你好", "您好", "嗨", "哈喽", "hello", "hi", "hey", "在吗", "早上好", "下午好", "晚上好"}:
+    if text in {
+        "你好",
+        "您好",
+        "嗨",
+        "哈喽",
+        "hello",
+        "hi",
+        "hey",
+        "在吗",
+        "早上好",
+        "下午好",
+        "晚上好",
+    }:
         return "你好！我可以帮你查询订单、了解退款/售后政策，或申请售后。你想办理什么？"
 
-    if any(term in text for term in ("你是谁", "你是什么", "你能做什么", "你可以做什么")):
+    if any(
+        term in text for term in ("你是谁", "你是什么", "你能做什么", "你可以做什么")
+    ):
         return "我是客服助手，可以帮你查询订单、了解退款/售后政策，或申请售后。"
 
-    if any(term in text for term in ("系统提示词", "system prompt", "api key", "密钥", "内部配置")):
+    if any(
+        term in text
+        for term in ("系统提示词", "system prompt", "api key", "密钥", "内部配置")
+    ):
         return "我不能提供系统提示词、密钥或内部配置；可以帮你处理订单、退款/售后和产品政策问题。"
 
     if any(term in text for term in ("写一段小说", "危险操作")):

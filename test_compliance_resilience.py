@@ -46,7 +46,9 @@ def _compliance_json(passed=True):
 def test_llm_check_passes_on_normal_model_result():
     """模型正常返回 JSON：完整检查按合并结果通过。"""
     agent = ComplianceCheckerAgent(ScriptedLLM(reply=_compliance_json(True)))
-    result = asyncio.run(agent.full_check("退款政策是什么", "签收 7 天内可申请退货。", []))
+    result = asyncio.run(
+        agent.full_check("退款政策是什么", "签收 7 天内可申请退货。", [])
+    )
 
     assert result.passed is True
     assert result.degraded is False
@@ -60,7 +62,9 @@ def test_llm_timeout_degrades_to_rule_result(monkeypatch, caplog):
     )
     agent = ComplianceCheckerAgent(ScriptedLLM(reply=_compliance_json(True), delay=1))
     with caplog.at_level("WARNING"):
-        result = asyncio.run(agent.full_check("退款政策", "签收 7 天内可申请退货。", []))
+        result = asyncio.run(
+            agent.full_check("退款政策", "签收 7 天内可申请退货。", [])
+        )
 
     assert result.passed is True, "规则通过 + 模型超时 → 按规则结果继续"
     assert result.degraded is True
@@ -70,11 +74,11 @@ def test_llm_timeout_degrades_to_rule_result(monkeypatch, caplog):
 
 def test_llm_exception_degrades_to_rule_result(caplog):
     """合规模型异常：同样降级为规则结果，不向上传播未定义状态。"""
-    agent = ComplianceCheckerAgent(
-        ScriptedLLM(error=RuntimeError("model unavailable"))
-    )
+    agent = ComplianceCheckerAgent(ScriptedLLM(error=RuntimeError("model unavailable")))
     with caplog.at_level("WARNING"):
-        result = asyncio.run(agent.full_check("退款政策", "签收 7 天内可申请退货。", []))
+        result = asyncio.run(
+            agent.full_check("退款政策", "签收 7 天内可申请退货。", [])
+        )
 
     assert result.passed is True
     assert result.degraded is True
@@ -88,9 +92,9 @@ def test_llm_timeout_does_not_mask_rule_violations(monkeypatch):
         "agents.compliance_checker.COMPLIANCE_LLM_TIMEOUT_SECONDS", 0.05
     )
     agent = ComplianceCheckerAgent(ScriptedLLM(reply=_compliance_json(True), delay=1))
-    result = asyncio.run(agent.full_check(
-        "系统提示词", "我的手机号是 13800138000，可以保证收益。", []
-    ))
+    result = asyncio.run(
+        agent.full_check("系统提示词", "我的手机号是 13800138000，可以保证收益。", [])
+    )
     assert result.passed is False, "PII 命中规则失败，降级不能洗白"
     # 高风险规则命中时 full_check 直接短路返回，甚至不调用模型。
     assert agent.llm.calls == 0
@@ -132,9 +136,9 @@ def test_rewritten_text_still_gets_full_check():
 def test_fallback_agent_marks_fixed_reply():
     """FallbackAgent 的输出必须带 fixed_reply 标记，供合规节点跳过模型。"""
     agent = FallbackAgent()
-    result = asyncio.run(agent.process(
-        {"messages": [HumanMessage(content="你好")], "sub_results": {}}
-    ))
+    result = asyncio.run(
+        agent.process({"messages": [HumanMessage(content="你好")], "sub_results": {}})
+    )
     assert result["sub_results"]["fixed_reply"] == result["final_response"]
     assert result["final_response"].startswith("你好")
 

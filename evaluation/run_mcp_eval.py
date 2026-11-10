@@ -18,9 +18,7 @@ def text_content(result) -> str:
     """提取 MCP CallToolResult 中的文本内容。"""
     blocks = getattr(result, "content", [])
     return "\n".join(
-        block.text
-        for block in blocks
-        if getattr(block, "type", "") == "text"
+        block.text for block in blocks if getattr(block, "type", "") == "text"
     )
 
 
@@ -38,11 +36,13 @@ async def main() -> None:
             "ticket_create",
             "risk_check",
         }
-        results.append({
-            "case": "tool_list",
-            "passed": expected_tools.issubset(set(tool_names)),
-            "actual": tool_names,
-        })
+        results.append(
+            {
+                "case": "tool_list",
+                "passed": expected_tools.issubset(set(tool_names)),
+                "actual": tool_names,
+            }
+        )
 
         eval_user = "mcp-evaluation-user"
         order_id = list_orders(eval_user)[0]["order_id"]
@@ -51,22 +51,26 @@ async def main() -> None:
             {"order_id": order_id, "user_id": eval_user},
         )
         order_text = text_content(order)
-        results.append({
-            "case": "order_query",
-            "passed": order_id in order_text and "delivered" in order_text,
-            "actual": order_text,
-        })
+        results.append(
+            {
+                "case": "order_query",
+                "passed": order_id in order_text and "delivered" in order_text,
+                "actual": order_text,
+            }
+        )
 
         knowledge = await client.call_tool(
             "knowledge_search",
             {"query": "退款政策", "top_k": 3},
         )
         knowledge_text = text_content(knowledge)
-        results.append({
-            "case": "knowledge_search_disabled",
-            "passed": "knowledge_unavailable" in knowledge_text,
-            "actual": knowledge_text,
-        })
+        results.append(
+            {
+                "case": "knowledge_search_disabled",
+                "passed": "knowledge_unavailable" in knowledge_text,
+                "actual": knowledge_text,
+            }
+        )
 
         ticket = await client.call_tool(
             "ticket_create",
@@ -78,11 +82,13 @@ async def main() -> None:
             },
         )
         ticket_text = text_content(ticket)
-        results.append({
-            "case": "ticket_create",
-            "passed": "ticket_id" in ticket_text and "created" in ticket_text,
-            "actual": ticket_text,
-        })
+        results.append(
+            {
+                "case": "ticket_create",
+                "passed": "ticket_id" in ticket_text and "created" in ticket_text,
+                "actual": ticket_text,
+            }
+        )
 
         for amount, expected_level, expected_review in (
             (0, "low", False),
@@ -94,14 +100,17 @@ async def main() -> None:
                 {"user_id": "eval-user", "action": "purchase", "amount": amount},
             )
             risk_text = text_content(risk)
-            results.append({
-                "case": f"risk_check_{amount}",
-                "passed": (
-                    f'"risk_level": "{expected_level}"' in risk_text
-                    and f'"requires_manual_review": {str(expected_review).lower()}' in risk_text
-                ),
-                "actual": risk_text,
-            })
+            results.append(
+                {
+                    "case": f"risk_check_{amount}",
+                    "passed": (
+                        f'"risk_level": "{expected_level}"' in risk_text
+                        and f'"requires_manual_review": {str(expected_review).lower()}'
+                        in risk_text
+                    ),
+                    "actual": risk_text,
+                }
+            )
     finally:
         await client.close()
 

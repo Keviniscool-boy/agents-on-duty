@@ -118,12 +118,16 @@ def test_mcp_timeout_falls_back_to_local_tool(monkeypatch, tmp_path):
             )
 
     agent = TicketHandlerAgent(ToolLLM(), TimeoutMCP())
-    result = asyncio.run(agent.process({
-        "messages": [HumanMessage(content="我的订单")],
-        "user_id": "timeout-user",
-        "session_id": "timeout-session",
-        "sub_results": {},
-    }))
+    result = asyncio.run(
+        agent.process(
+            {
+                "messages": [HumanMessage(content="我的订单")],
+                "user_id": "timeout-user",
+                "session_id": "timeout-session",
+                "sub_results": {},
+            }
+        )
+    )
     tool_result = result["sub_results"]["ticket_handler_tool_results"][0]
     assert tool_result["fallback_used"] is True
     assert tool_result["error_type"] == "timeout"
@@ -171,15 +175,23 @@ def test_compare_requires_same_dataset_corpus_and_size():
     dataset_b = {"sha256": "b", "cases": 1}
     corpus_a = {"sha256": "c", "documents": 7}
     corpus_b = {"sha256": "d", "documents": 7}
-    base = build_report("stage5", [{"passed": True}], dataset=dataset_a, corpus=corpus_a)
-    same = build_report("stage5", [{"passed": True}], dataset=dataset_a, corpus=corpus_a)
+    base = build_report(
+        "stage5", [{"passed": True}], dataset=dataset_a, corpus=corpus_a
+    )
+    same = build_report(
+        "stage5", [{"passed": True}], dataset=dataset_a, corpus=corpus_a
+    )
     assert compare(base, same)["comparable"] is True
 
-    diff_dataset = build_report("stage5", [{"passed": True}], dataset=dataset_b, corpus=corpus_a)
+    diff_dataset = build_report(
+        "stage5", [{"passed": True}], dataset=dataset_b, corpus=corpus_a
+    )
     result = compare(base, diff_dataset)
     assert result["comparable"] is False and "dataset" in result["reasons"]
 
-    diff_corpus = build_report("stage5", [{"passed": True}], dataset=dataset_a, corpus=corpus_b)
+    diff_corpus = build_report(
+        "stage5", [{"passed": True}], dataset=dataset_a, corpus=corpus_b
+    )
     assert "corpus" in compare(base, diff_corpus)["reasons"]
 
     diff_size = build_report(
@@ -204,7 +216,10 @@ def test_compare_requires_complete_metadata():
     assert result["comparable"] is False
     assert "dataset_missing" in result["reasons"]
     assert "corpus_missing" in result["reasons"]
-    assert compare(empty, build_report("stage5", [{"passed": True}]))["comparable"] is False
+    assert (
+        compare(empty, build_report("stage5", [{"passed": True}]))["comparable"]
+        is False
+    )
 
 
 def test_dataset_cases_must_match_sample_size():
@@ -240,7 +255,11 @@ def test_dataset_and_corpus_fingerprints(tmp_path):
 
 
 def test_manifest_covers_required_scenarios():
-    manifest = json.loads((Path(__file__).parent / "evaluation" / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads(
+        (Path(__file__).parent / "evaluation" / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
     covered = set()
     for suite in manifest["suites"].values():
         covered.update(suite.get("scenarios", []))

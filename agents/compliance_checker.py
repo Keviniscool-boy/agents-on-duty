@@ -14,12 +14,15 @@ from tracing.otel_config import compliance_violation_codes, trace_agent_call
 logger = logging.getLogger(__name__)
 
 # 合规 LLM 检查超时：超时后按规则检查结果继续，不阻塞对话。
-COMPLIANCE_LLM_TIMEOUT_SECONDS = float(os.getenv("COMPLIANCE_LLM_TIMEOUT_SECONDS", "15"))
+COMPLIANCE_LLM_TIMEOUT_SECONDS = float(
+    os.getenv("COMPLIANCE_LLM_TIMEOUT_SECONDS", "15")
+)
 
 
 @dataclass
 class ComplianceResult:
     """保存一次合规检查的完整结果。"""
+
     passed: bool
     risk_level: str
     violations: list[str] = field(default_factory=list)
@@ -260,9 +263,7 @@ class ComplianceCheckerAgent:
         )
         final_response = state.get("final_response", "")
         sub_results = state.get("sub_results", {})
-        tool_results = list(
-            sub_results.get("ticket_handler_tool_results", [])
-        )
+        tool_results = list(sub_results.get("ticket_handler_tool_results", []))
         tool_results.extend(sub_results.get("knowledge_rag_context", []))
 
         # 固定话术（问候/兜底/确定性转人工）只做规则检查，不再消耗合规模型。
@@ -282,7 +283,9 @@ class ComplianceCheckerAgent:
                         "reason": reason,
                         "risk_level": result.risk_level,
                         "violations": result.violations,
-                        "violation_codes": compliance_violation_codes(result.violations),
+                        "violation_codes": compliance_violation_codes(
+                            result.violations
+                        ),
                         "llm_skipped": True,
                     },
                 },
@@ -308,7 +311,11 @@ class ComplianceCheckerAgent:
                     "risk_level": result.risk_level,
                     "violations": result.violations,
                     "violation_codes": compliance_violation_codes(result.violations),
-                    **({"degraded": True, "degraded_reason": result.degraded_reason} if result.degraded else {}),
+                    **(
+                        {"degraded": True, "degraded_reason": result.degraded_reason}
+                        if result.degraded
+                        else {}
+                    ),
                 },
             },
         }

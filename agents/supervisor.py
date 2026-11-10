@@ -22,7 +22,7 @@ class AgentState(TypedDict):
     """在 Graph 各节点之间传递的共享状态。"""
 
     messages: Annotated[list[BaseMessage], add_messages]
-    user_id:str
+    user_id: str
     # 认证用户的显示名：写进工单/审计，客服能直接认出客户。
     username: str
     session_id: str
@@ -72,7 +72,20 @@ class SupervisorNode:
         """对高置信度请求先做本地路由，避免简单问题浪费一次 LLM 调用。"""
         text = message.lower()
 
-        if text.strip() in {"你好", "您好", "嗨", "哈喽", "hello", "hi", "hey", "在吗", "早上好", "下午好", "晚上好", "你是谁"}:
+        if text.strip() in {
+            "你好",
+            "您好",
+            "嗨",
+            "哈喽",
+            "hello",
+            "hi",
+            "hey",
+            "在吗",
+            "早上好",
+            "下午好",
+            "晚上好",
+            "你是谁",
+        }:
             return "fallback"
 
         fallback_terms = (
@@ -91,15 +104,39 @@ class SupervisorNode:
 
         # 订单号或明确的查询/工单动作应交给业务工具 Agent。
         has_order_id = re.search(r"(?:ord[-_]?\w+|订单号?\s*[A-Za-z0-9_-]+)", text)
-        ticket_terms = ("创建工单", "提交工单", "订单状态", "查询物流", "物流查询", "申请退款", "我要退款", "帮我退款", "退货申请", "我的订单")
+        ticket_terms = (
+            "创建工单",
+            "提交工单",
+            "订单状态",
+            "查询物流",
+            "物流查询",
+            "申请退款",
+            "我要退款",
+            "帮我退款",
+            "退货申请",
+            "我的订单",
+        )
         if has_order_id or any(term in text for term in ticket_terms):
             return "ticket_handler"
 
         knowledge_terms = (
-            "退款", "退货", "理财", "收益率", "投资期限", "开户",
-            "风险评估", "风险问卷", "身份证", "银行卡", "安全渠道",
-            "服务政策", "产品政策", "参考年化",
-            "无法确认", "没有相关信息", "知识库没有",
+            "退款",
+            "退货",
+            "理财",
+            "收益率",
+            "投资期限",
+            "开户",
+            "风险评估",
+            "风险问卷",
+            "身份证",
+            "银行卡",
+            "安全渠道",
+            "服务政策",
+            "产品政策",
+            "参考年化",
+            "无法确认",
+            "没有相关信息",
+            "知识库没有",
         )
         if any(term in text for term in knowledge_terms):
             return "knowledge_rag"
@@ -221,7 +258,9 @@ class HumanReviewNode:
             "tool_results": state.get("sub_results", {}).get(
                 "ticket_handler_tool_results", []
             ),
-            "knowledge_sources": state.get("sub_results", {}).get("knowledge_rag_context", []),
+            "knowledge_sources": state.get("sub_results", {}).get(
+                "knowledge_rag_context", []
+            ),
         }
         decision = interrupt(payload)
         if not isinstance(decision, dict):
@@ -295,7 +334,9 @@ async def create_sqlite_checkpointer():
         CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
         _CHECKPOINT_CONN = await aiosqlite.connect(str(CHECKPOINT_PATH))
         checkpointer = AsyncSqliteSaver(_CHECKPOINT_CONN)
-        await checkpointer.aget_tuple({"configurable": {"thread_id": "__startup_check__"}})
+        await checkpointer.aget_tuple(
+            {"configurable": {"thread_id": "__startup_check__"}}
+        )
         return checkpointer
     except Exception as exc:
         if _CHECKPOINT_CONN is not None:
@@ -354,7 +395,9 @@ def create_supervisor_graph(
     # 该链路所有用户可见文本均为固定话术，恢复后经 synthesize 收尾。
     graph.add_conditional_edges(
         "ticket_handler",
-        lambda state: "human_review" if state.get("pending_handoff") else "compliance_checker",
+        lambda state: (
+            "human_review" if state.get("pending_handoff") else "compliance_checker"
+        ),
         {"human_review": "human_review", "compliance_checker": "compliance_checker"},
     )
     graph.add_edge("fallback", "compliance_checker")

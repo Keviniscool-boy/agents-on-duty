@@ -24,35 +24,41 @@ async def test_short_term() -> list[dict]:
     await fallback.add_message("session-a", "user", "第三条")
     history_a = await fallback.get_history("session-a")
     history_b = await fallback.get_history("session-b")
-    results.append({
-        "case": "short_term_fallback_limit_and_isolation",
-        "passed": (
-            len(history_a) == 2
-            and history_a[0]["content"] == "第二条"
-            and not history_b
-        ),
-        "actual": history_a,
-    })
+    results.append(
+        {
+            "case": "short_term_fallback_limit_and_isolation",
+            "passed": (
+                len(history_a) == 2
+                and history_a[0]["content"] == "第二条"
+                and not history_b
+            ),
+            "actual": history_a,
+        }
+    )
 
     await fallback.clear_history("session-a")
     cleared = await fallback.get_history("session-a")
-    results.append({
-        "case": "short_term_clear",
-        "passed": not cleared,
-        "actual": cleared,
-    })
+    results.append(
+        {
+            "case": "short_term_clear",
+            "passed": not cleared,
+            "actual": cleared,
+        }
+    )
 
     # 使用默认配置验证实际运行时的 Redis 或降级路径。
     runtime = ShortTermMemory(max_turns=3)
     await runtime.add_message("runtime-session", "user", "runtime message")
     runtime_history = await runtime.get_history("runtime-session")
-    results.append({
-        "case": "short_term_runtime_roundtrip",
-        "passed": bool(runtime_history)
-        and runtime_history[-1]["content"] == "runtime message",
-        "backend": "redis" if runtime.redis is not None else "fallback",
-        "actual": runtime_history,
-    })
+    results.append(
+        {
+            "case": "short_term_runtime_roundtrip",
+            "passed": bool(runtime_history)
+            and runtime_history[-1]["content"] == "runtime message",
+            "backend": "redis" if runtime.redis is not None else "fallback",
+            "actual": runtime_history,
+        }
+    )
     await runtime.clear_history("runtime-session")
     return results
 
@@ -65,24 +71,28 @@ def test_working() -> list[dict]:
 
     context = memory.get_context("session-a")
     history = memory.get_history("session-a")
-    result = [{
-        "case": "working_context_and_history_limit",
-        "passed": (
-            context["step"] == 3
-            and context["agent"] == "synthesizer"
-            and len(history) == 2
-            and history[0]["data"]["step"] == 2
-        ),
-        "actual": {"context": context, "history": history},
-    }]
+    result = [
+        {
+            "case": "working_context_and_history_limit",
+            "passed": (
+                context["step"] == 3
+                and context["agent"] == "synthesizer"
+                and len(history) == 2
+                and history[0]["data"]["step"] == 2
+            ),
+            "actual": {"context": context, "history": history},
+        }
+    ]
 
     memory.clear("session-a")
-    result.append({
-        "case": "working_clear",
-        "passed": not memory.get_context("session-a")
-        and not memory.get_history("session-a"),
-        "actual": memory.export_for_persistence("session-a"),
-    })
+    result.append(
+        {
+            "case": "working_clear",
+            "passed": not memory.get_context("session-a")
+            and not memory.get_history("session-a"),
+            "actual": memory.export_for_persistence("session-a"),
+        }
+    )
     return result
 
 

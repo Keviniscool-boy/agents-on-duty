@@ -92,12 +92,16 @@ class TicketHandlerAgent:
         fallback_used = False
         retry_count = 0
         try:
-            result, retry_count = await self._call_with_retry("ticket_create", arguments)
+            result, retry_count = await self._call_with_retry(
+                "ticket_create", arguments
+            )
         except (TimeoutError, ConnectionError, RuntimeError, AttributeError):
             # AttributeError：测试/降级场景 mcp_client 不可用，直接走本地工具。
             fallback_used = True
             error_type = "mcp_unavailable"
-            result = await asyncio.to_thread(self._local_tool, "ticket_create", arguments)
+            result = await asyncio.to_thread(
+                self._local_tool, "ticket_create", arguments
+            )
         else:
             error_type = None
 
@@ -115,7 +119,11 @@ class TicketHandlerAgent:
                 **audit_context,
             )
 
-        status_label = "待处理" if (result or {}).get("status", "pending") == "pending" else "处理中"
+        status_label = (
+            "待处理"
+            if (result or {}).get("status", "pending") == "pending"
+            else "处理中"
+        )
         prefix = (
             "您已有一张人工服务工单，无需重复提交。"
             if (result or {}).get("reused")
@@ -195,10 +203,18 @@ class TicketHandlerAgent:
         if tool_name == "ticket_create":
             # LLM 可能多传无关字段，白名单过滤防止 TypeError。
             allowed = {
-                "title", "description", "priority", "category", "idempotency_key",
-                "user_id", "session_id", "username",
+                "title",
+                "description",
+                "priority",
+                "category",
+                "idempotency_key",
+                "user_id",
+                "session_id",
+                "username",
             }
-            return ticket_create(**{key: arguments[key] for key in allowed if key in arguments})
+            return ticket_create(
+                **{key: arguments[key] for key in allowed if key in arguments}
+            )
         raise RuntimeError(f"没有本地备用工具: {tool_name}")
 
     async def _call_with_retry(
@@ -220,7 +236,9 @@ class TicketHandlerAgent:
                 await asyncio.sleep(retry_delays[retry_count])
 
     @staticmethod
-    def build_idempotency_key(user_id: str, arguments: dict, session_id: str = "") -> str:
+    def build_idempotency_key(
+        user_id: str, arguments: dict, session_id: str = ""
+    ) -> str:
         """按业务语义（用户 + 工单内容指纹）生成幂等键。
 
         不使用本次 tool_call id，这样重试、降级和用户重复提交
@@ -288,12 +306,36 @@ class TicketHandlerAgent:
                     "description": tool.description or "",
                     "parameters": {
                         **tool.input_schema,
-                        "properties": {k: v for k, v in tool.input_schema.get("properties", {}).items() if k not in {"user_id", "request_id", "idempotency_key", "session_id", "username"}},
-                        "required": [k for k in tool.input_schema.get("required", []) if k not in {"user_id", "request_id", "idempotency_key", "session_id", "username"}],
+                        "properties": {
+                            k: v
+                            for k, v in tool.input_schema.get("properties", {}).items()
+                            if k
+                            not in {
+                                "user_id",
+                                "request_id",
+                                "idempotency_key",
+                                "session_id",
+                                "username",
+                            }
+                        },
+                        "required": [
+                            k
+                            for k in tool.input_schema.get("required", [])
+                            if k
+                            not in {
+                                "user_id",
+                                "request_id",
+                                "idempotency_key",
+                                "session_id",
+                                "username",
+                            }
+                        ],
                     },
                 },
             }
-            for tool in available_tools if tool.name in {"order_query", "order_list", "refund_apply", "ticket_create"}
+            for tool in available_tools
+            if tool.name
+            in {"order_query", "order_list", "refund_apply", "ticket_create"}
         ]
         llm_with_tools = self.llm.bind_tools(llm_tools)
 
@@ -316,11 +358,14 @@ class TicketHandlerAgent:
         tool_results = []
 
         for tool_call in response.tool_calls:
-            print(
-                f"[TicketHandlerAgent] 调用 MCP 工具: {tool_call['name']}"
-            )
+            print(f"[TicketHandlerAgent] 调用 MCP 工具: {tool_call['name']}")
             tool_name = tool_call["name"]
-            if tool_name not in {"order_query", "order_list", "refund_apply", "ticket_create"}:
+            if tool_name not in {
+                "order_query",
+                "order_list",
+                "refund_apply",
+                "ticket_create",
+            }:
                 raise ValueError("Unsupported tool")
             tool_arguments = dict(tool_call["args"])
             tool_arguments.pop("user_id", None)
@@ -348,7 +393,9 @@ class TicketHandlerAgent:
             retry_count = 0
             try:
                 if use_local:
-                    result = await asyncio.to_thread(self._local_tool, tool_name, tool_arguments)
+                    result = await asyncio.to_thread(
+                        self._local_tool, tool_name, tool_arguments
+                    )
                 else:
                     result, retry_count = await self._call_with_retry(
                         tool_name,
@@ -357,19 +404,27 @@ class TicketHandlerAgent:
             except TimeoutError as error:
                 error_type = "timeout"
                 fallback_used = True
-                result = await asyncio.to_thread(self._local_tool, tool_name, tool_arguments)
+                result = await asyncio.to_thread(
+                    self._local_tool, tool_name, tool_arguments
+                )
             except (ConnectionError, RuntimeError) as error:
                 error_type = "mcp_error"
                 fallback_used = True
-                result = await asyncio.to_thread(self._local_tool, tool_name, tool_arguments)
+                result = await asyncio.to_thread(
+                    self._local_tool, tool_name, tool_arguments
+                )
 
             from tracing.admin_audit import current_trace, record_event
+
             audit_context = current_trace()
             if audit_context:
-                record_event(kind="tool", action=tool_name,
-                             outcome="fallback" if fallback_used else "success",
-                             detail=f"retries={retry_count};error={error_type or 'none'}",
-                             **audit_context)
+                record_event(
+                    kind="tool",
+                    action=tool_name,
+                    outcome="fallback" if fallback_used else "success",
+                    detail=f"retries={retry_count};error={error_type or 'none'}",
+                    **audit_context,
+                )
 
             tool_results.append(
                 {
@@ -393,8 +448,11 @@ class TicketHandlerAgent:
         pending_handoff = {}
         for entry in tool_results:
             result = entry.get("result") or {}
-            if (entry.get("tool") == "refund_apply" and result.get("status") == "pending_review"
-                    and result.get("session_id") == state.get("session_id")):
+            if (
+                entry.get("tool") == "refund_apply"
+                and result.get("status") == "pending_review"
+                and result.get("session_id") == state.get("session_id")
+            ):
                 pending_handoff = {
                     "refund_id": result.get("id", ""),
                     "ticket_id": result.get("ticket_id", ""),
@@ -407,7 +465,8 @@ class TicketHandlerAgent:
         # 模型调用一旦失败，申请就会无人认领。
         final_message = (
             AIMessage(content="您的退款申请已提交人工审核，客服处理后将继续为您跟进。")
-            if pending_handoff else await llm_with_tools.ainvoke(messages)
+            if pending_handoff
+            else await llm_with_tools.ainvoke(messages)
         )
         final_response = _text_content(final_message.content)
 
@@ -416,7 +475,14 @@ class TicketHandlerAgent:
             "final_response": final_response,
             "pending_handoff": pending_handoff,
             # 等待话术未经模型审查，如实标记合规状态，避免下游当作已审内容。
-            **({"compliance_passed": False, "compliance_reason": "固定系统等待话术，未执行模型审查"} if pending_handoff else {}),
+            **(
+                {
+                    "compliance_passed": False,
+                    "compliance_reason": "固定系统等待话术，未执行模型审查",
+                }
+                if pending_handoff
+                else {}
+            ),
             "sub_results": {
                 **state.get("sub_results", {}),
                 "ticket_handler": final_response,
