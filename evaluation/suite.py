@@ -1,4 +1,4 @@
-"""Versioned evaluation suite helpers: environment, reports, comparison."""
+"""带版本的评测套件辅助函数：环境快照、报告构建与可比对判断。"""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def _git_commit() -> str:
 
 
 def environment() -> dict:
-    """Snapshot the runtime/model configuration so results are reproducible."""
+    """记录运行时与模型配置快照，保证评测结果可复现。"""
     return {
         "suite_version": SUITE_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -70,7 +70,7 @@ def file_sha256(path: str | Path) -> str:
 
 
 def dataset_info(path: str | Path, cases: list[dict] | None = None) -> dict:
-    """Fingerprint the cases actually evaluated (full file or a selected subset)."""
+    """对实际参评的用例集合取指纹（全量文件或抽样子集）。"""
     target = Path(path)
     if cases is not None:
         payload = "\n".join(
@@ -86,7 +86,7 @@ def dataset_info(path: str | Path, cases: list[dict] | None = None) -> dict:
 
 
 def corpus_info(kb_dir: str | Path) -> dict:
-    """Fingerprint every policy/document file used for retrieval."""
+    """对参与检索的全部政策与文档文件取指纹。"""
     root = Path(kb_dir)
     digest = hashlib.sha256()
     files = sorted(
@@ -112,7 +112,7 @@ COMPARABLE_KEYS = ("suite_version", "model", "embedding_model", "embedding_provi
 
 
 def compare(baseline: dict, candidate: dict) -> dict:
-    """Only report deltas when suite, model, dataset, corpus and sample size all match."""
+    """仅当套件、模型、数据集、语料与样本量全部一致时才输出差异。"""
     reasons = [key for key in COMPARABLE_KEYS if baseline.get(key) != candidate.get(key)]
     baseline_dataset = baseline.get("dataset") or {}
     candidate_dataset = candidate.get("dataset") or {}

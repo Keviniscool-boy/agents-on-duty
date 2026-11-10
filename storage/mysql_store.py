@@ -194,7 +194,7 @@ class MySQLStore:
     def _now() -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-    # ---------- working memory ----------
+    # ---------- 工作记忆 ----------
 
     def save_working_context(
         self,
@@ -395,7 +395,7 @@ class MySQLStore:
                 (session_id,),
             )
 
-    # ---------- short term memory ----------
+    # ---------- 短期记忆 ----------
 
     def add_message(
         self,

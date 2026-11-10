@@ -1,4 +1,4 @@
-"""Deterministic Stage 5 regression suite (no external model/API required)."""
+"""阶段五回归套件：确定性执行，不依赖外部模型或在线接口。"""
 
 import asyncio
 import json

@@ -15,7 +15,7 @@ from tracing.otel_config import trace_agent_call
 
 
 def _text_content(content) -> str:
-    """Normalize plain text and OpenAI Responses text blocks for downstream nodes."""
+    """把字符串或分块文本内容规整为纯文本，供下游节点使用。"""
     if isinstance(content, str):
         return content
     if content is None:

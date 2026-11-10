@@ -1,4 +1,4 @@
-"""Regression coverage for the demo after-sales workflow."""
+"""演示售后流程的回归测试。"""
 
 import asyncio
 import sqlite3

@@ -123,7 +123,7 @@ def get_user_by_id(user_id: str) -> sqlite3.Row | None:
 
 
 def set_user_role(username: str, role: str, actor_id: str = "bootstrap") -> sqlite3.Row | None:
-    """Change a role and record the change in the same transaction."""
+    """在同一事务里完成角色变更并记录审计。"""
     if role not in {"user", "agent", "admin"}:
         raise ValueError("invalid_role")
     with _connection() as connection:

@@ -1,4 +1,4 @@
-"""Stable knowledge service shared by the HTTP API and MCP adapter."""
+"""接口层与工具适配层共用的稳定知识服务。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ DEFAULT_KB_DIR = Path(__file__).resolve().parents[1] / "knowledge_base"
 
 
 class KnowledgeUnavailableError(RuntimeError):
-    """Raised when the knowledge index cannot be built or has no documents."""
+    """知识索引构建失败或没有任何文档时抛出。"""
 
 
 async def initialize_knowledge_memory(
@@ -19,11 +19,10 @@ async def initialize_knowledge_memory(
     kb_dir: str | Path | None = None,
     require_documents: bool = False,
 ) -> int:
-    """Rebuild/refresh the persisted index before serving or comparing.
+    """对外服务或对比评测前，重建或刷新落盘索引。
 
-    The HTTP startup path loads the knowledge base explicitly; MCP and the
-    evaluation baseline must do the same or they can silently use an empty or
-    stale index.
+    接口层启动时已显式加载知识库；工具适配层与评测基线同样必须
+    走这一步，否则可能悄悄用上空的或过期的索引。
     """
     count = await memory.load_knowledge_base(str(kb_dir or DEFAULT_KB_DIR))
     if getattr(memory, "index_build_failed", False):
@@ -48,11 +47,10 @@ class KnowledgeHit:
 
 
 class KnowledgeService:
-    """Thin, content-only facade over the FAISS/keyword knowledge retriever.
+    """包一层薄的纯内容门面，屏蔽向量/关键词检索的实现细节。
 
-    The same object backs both ``POST /api/knowledge/search`` and the MCP
-    ``knowledge_search`` tool, so Pi and the LangGraph RAG agent read from one
-    source of truth.
+    检索接口与工具适配层的知识检索工具共用同一个对象，
+    保证实验智能体与现有检索智能体读到同一份事实来源。
     """
 
     def __init__(self, memory):

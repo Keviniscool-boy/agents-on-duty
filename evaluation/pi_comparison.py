@@ -1,9 +1,8 @@
-"""Compare the Pi knowledge agent with the LangGraph RAG baseline.
+"""对比实验知识智能体与现有检索问答基线。
 
-Both sides read the same policy corpus through the Python knowledge service.
-The comparison is intentionally conservative: Pi is only recommended for wider
-use when it clearly wins on citation quality without latency/cost/failure
-regressions.
+双方通过同一个知识服务读取同一套政策语料。对比判定刻意保守：
+只有当实验方案在引用质量上明显胜出、且时延/成本/失败率都没有
+退化时，才建议扩大使用范围。
 """
 
 from __future__ import annotations
@@ -43,7 +42,7 @@ class RunnerResult:
 
 
 class SubprocessPiRunner:
-    """Runs ``experiments/pi_knowledge_agent`` via its JSON CLI."""
+    """以子进程方式调用实验子项目的命令行，读取其结构化输出。"""
 
     def __init__(self, command: list[str] | None = None, env: dict | None = None):
         self.command = command or ["node", str(PI_DIR / "dist" / "index.js")]
@@ -93,7 +92,7 @@ class SubprocessPiRunner:
 
 
 class LangGraphRagRunner:
-    """In-process baseline using the existing KnowledgeRAGAgent."""
+    """进程内基线：复用现有的检索问答智能体。"""
 
     def __init__(self):
         from langchain_core.messages import HumanMessage
@@ -178,8 +177,8 @@ def evaluate_runners(cases: list[dict], rag_runner, pi_runner) -> list[dict]:
 def _side_summary(results: list[dict], side: str) -> dict:
     rows = [item[side] for item in results]
     total = len(rows) or 1
-    # Failed requests are reported separately and excluded from quality scores:
-    # an empty answer/sources would otherwise silently drag the denominator.
+    # 失败请求单独统计并排除在质量分之外：
+    # 否则空回答/空引用会悄悄拉低分母，掩盖真实质量差异。
     valid_rows = [row for row in rows if not row.get("error")]
     valid_total = len(valid_rows) or 1
     known_costs = [
@@ -207,7 +206,7 @@ DECISION_BASIS = "citation_full_string_match_only"
 
 
 def decide(pi: dict, rag: dict, comparison: dict, max_cost_usd: float = 0.05) -> dict:
-    """Only recommend expanding Pi when it clearly wins without regressions."""
+    """只有实验方案明显胜出且无退化时，才建议扩大其使用范围。"""
     if not pi.get("valid_cases") or not rag.get("valid_cases"):
         return {
             "expand_pi": False,

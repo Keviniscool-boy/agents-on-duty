@@ -1,4 +1,4 @@
-"""Request-scoped trace ID, propagated to audit records and responses."""
+"""请求级追踪号：随审计记录与响应头透传。"""
 
 from __future__ import annotations
 
@@ -13,15 +13,15 @@ _request_id: ContextVar[str] = ContextVar("request_id", default="")
 
 
 def get_request_id() -> str:
-    """Return the current HTTP request's trace ID (or "" outside a request)."""
+    """返回当前请求的追踪号；不在请求上下文中时返回空串。"""
     return _request_id.get()
 
 
 class TraceIdMiddleware:
-    """Pure ASGI middleware: assign/forward X-Trace-Id for every request.
+    """纯网关层中间件：为每个请求分配或透传追踪号响应头。
 
-    Pure ASGI (rather than BaseHTTPMiddleware) keeps streaming responses and
-    background tasks untouched, which matters for the SSE chat endpoint.
+    不走框架的高层中间件封装，是为了不干扰流式响应与后台任务——
+    这对聊天的流式端点很关键。
     """
 
     def __init__(self, app):

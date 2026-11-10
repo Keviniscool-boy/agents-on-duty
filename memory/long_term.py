@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingUnavailable(Exception):
-    """The embedding provider could not process a request."""
+    """向量服务无法处理本次请求时抛出。"""
 
 
 class _LazyEmbeddings:
@@ -143,7 +143,7 @@ class LongTermMemory:
         return vector
 
     def knowledge_status(self) -> str:
-        """Report the last observed state without probing the provider."""
+        """只返回最近一次观测到的状态，不主动探测服务可用性。"""
         if self.index_build_failed or self.embedding_available is False:
             return "degraded"
         if not self.documents:
@@ -242,7 +242,7 @@ class LongTermMemory:
         )
 
     async def load_knowledge_base(self, kb_dir: str) -> int:
-        """Synchronize the index with current eligible files and their metadata."""
+        """让索引与知识库目录中当前有效的文档及其元数据保持同步。"""
         kb_path = Path(kb_dir)
         documents = []
         published_ids = set()
@@ -381,7 +381,7 @@ class LongTermMemory:
         keyword_hits: list[tuple[dict, float]],
         top_k: int,
     ) -> list[dict]:
-        """Reciprocal Rank Fusion：合并向量与关键词两路排名。"""
+        """倒数排名融合：合并向量与关键词两路排名。"""
         fused: dict[str, dict] = {}
         for source, hits in (("vector", vector_hits), ("keyword", keyword_hits)):
             for rank, (document, score) in enumerate(hits):

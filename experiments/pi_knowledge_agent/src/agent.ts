@@ -46,10 +46,10 @@ function createProjectModel(): {
   const models = createModels();
 
   if (baseUrl) {
-    // The project may use an arbitrary OpenAI-compatible model name, which is
-    // not in Pi's built-in catalog; register it as a custom provider.
+    // 项目可能使用任意兼容接口的模型名，内置目录里查不到，
+    // 因此注册为自定义提供方再使用。
     const providerId = "project-openai";
-    // Without configured prices we must treat cost as unknown, not as zero.
+    // 没有配置单价时必须把成本视为未知，而不是当成零。
     const inputPrice = Number(process.env.PI_INPUT_COST_PER_MTOK ?? 0);
     const outputPrice = Number(process.env.PI_OUTPUT_COST_PER_MTOK ?? 0);
     const costKnown = inputPrice > 0 || outputPrice > 0;

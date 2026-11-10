@@ -1,4 +1,4 @@
-"""MCP adapter exposing the Python knowledge service to Pi/other agents."""
+"""通过工具协议把本项目的知识服务暴露给实验智能体等外部使用方。"""
 
 import asyncio
 import sys
@@ -24,7 +24,7 @@ _service: KnowledgeService | None = None
 
 
 async def _get_service() -> KnowledgeService:
-    """Lazily build the index once before serving MCP requests."""
+    """首次请求时才构建索引，之后全程复用同一份服务。"""
     global _service
     if _service is None:
         memory = LongTermMemory()

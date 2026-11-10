@@ -1,1 +1,1 @@
-"""FastAPI application package."""
+"""接口层应用包：装配网页框架应用实例。"""

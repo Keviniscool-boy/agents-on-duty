@@ -1,4 +1,4 @@
-"""Stage 5 tests: request trace, model-call observability, fault coverage, suite."""
+"""阶段五测试：请求追踪、模型调用可观测、故障覆盖与评测套件。"""
 
 import asyncio
 import json

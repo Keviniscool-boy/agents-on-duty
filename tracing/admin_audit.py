@@ -1,4 +1,4 @@
-"""Bounded, content-free operational records for the administrator workspace."""
+"""面向管理员工作台的有界运行记录：只留标识与状态，不含业务内容。"""
 
 import contextvars
 import logging
@@ -25,7 +25,7 @@ def current_trace():
 
 
 def record_event(*, kind: str, action: str, outcome: str, actor_id: str = "", target_id: str = "", session_id: str = "", trace_id: str = "", duration_ms: float | None = None, detail: str = "") -> None:
-    """Write only caller-selected identifiers and fixed status codes, never request content."""
+    """只写入调用方指定的标识与固定状态码，绝不落请求正文。"""
     try:
         with closing(_connection()) as connection, connection:
             connection.execute(

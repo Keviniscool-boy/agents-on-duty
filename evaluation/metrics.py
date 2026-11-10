@@ -1,7 +1,7 @@
-"""Pure metric helpers for the Stage 4 knowledge evaluation.
+"""阶段四知识评测的纯指标计算函数。
 
-Keeping the scoring logic here makes it unit-testable without a live model,
-embedding service, or running API.
+打分逻辑集中在这里，是为了不依赖真实模型、向量服务或在线接口，
+也能单独测试这些函数。
 """
 
 REFUSAL_MARKERS = ("没有相关信息", "无法确认", "暂时无法", "没有足够")
@@ -24,7 +24,7 @@ def score_case(
     answer: str,
     data: dict | None = None,
 ) -> dict:
-    """Score one evaluation case on recall, citation, refusal and handoff."""
+    """对单个评测用例打分，覆盖召回、引用、拒答与转人工四个维度。"""
     expected_source = case.get("expected_source")
     expected_action = case.get("expected_action", "answer")
     source_hit = (

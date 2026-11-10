@@ -36,7 +36,7 @@ async def order_list(user_id: str = "", request_id: str = "") -> dict:
 
 @server.tool(name="refund_apply", description="为自己的演示订单提交退款申请；需要订单号和用户提供的退款原因，不执行支付")
 async def refund_apply(order_id: str, reason: str, application_type: str = "", user_id: str = "", request_id: str = "", idempotency_key: str = "", session_id: str = "") -> dict:
-    """application_type is no_reason or quality_issue when explicitly known."""
+    """仅当能明确区分时才标注售后类型：无理由退货或商品质量问题。"""
     return await asyncio.to_thread(apply_refund, user_id, order_id, reason, idempotency_key, session_id, application_type or None)
 
 @server.tool(

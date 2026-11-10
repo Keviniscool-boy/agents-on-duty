@@ -97,7 +97,7 @@ def create_or_get_ticket(
 
 
 def list_tickets(limit: int = 100, offset: int = 0, status: str = "") -> list[dict]:
-    """Return stored support tickets, including older records without metadata."""
+    """返回已存的全部工单，兼容缺少元数据的历史记录。"""
     connection = _connect()
     try:
         rows = connection.execute(
@@ -113,7 +113,7 @@ def list_tickets(limit: int = 100, offset: int = 0, status: str = "") -> list[di
 
 
 def list_user_tickets(user_id: str, limit: int = 20, offset: int = 0) -> dict:
-    """Return a user's own tickets, newest first (cross-user isolated)."""
+    """返回指定用户自己的工单，新的在前（跨用户隔离）。"""
     connection = _connect()
     try:
         rows = connection.execute(
@@ -139,7 +139,7 @@ def update_ticket_status(
     operator_id: str,
     operator: str,
 ) -> dict | None:
-    """Update a ticket's workbench state using a SQLite write transaction."""
+    """在工作台更新工单状态，用数据库写事务保证一致。"""
     connection = _connect()
     try:
         connection.execute("BEGIN IMMEDIATE")

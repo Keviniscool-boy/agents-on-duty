@@ -1,4 +1,4 @@
-"""Demo after-sales service; no payments are executed."""
+"""演示用售后服务；不执行任何真实支付。"""
 
 import hashlib
 import os
@@ -143,7 +143,7 @@ def release_session_turn(session_id: str, token: str) -> None:
 
 
 def list_orders(user_id: str) -> list[dict]:
-    """Provision two sample orders for each account once."""
+    """每个账号首次查询时预置两条演示订单。"""
     if not user_id:
         raise ValueError("user_id is required")
     prefix = hashlib.sha256(user_id.encode()).hexdigest()[:24].upper()
@@ -239,7 +239,7 @@ def list_refunds(user_id: str) -> list[dict]:
 
 
 def cancel_refund(user_id: str, refund_id: str) -> dict:
-    """Cancel a pending request and its ticket atomically; repeated cancellation is safe."""
+    """在事务里撤回待审核申请并作废工单；重复撤回安全返回原结果。"""
     db = _connect()
     try:
         db.execute("BEGIN IMMEDIATE")
@@ -432,7 +432,7 @@ def provide_refund_information(user_id: str, refund_id: str, content: str) -> di
 
 
 def claim_handoff(refund_id: str) -> dict | None:
-    """Claim a pending resume; an expired lease allows recovery after a crash."""
+    """认领待恢复事件；租约过期后允许在崩溃恢复场景重新认领。"""
     db = _connect()
     try:
         db.execute("BEGIN IMMEDIATE")

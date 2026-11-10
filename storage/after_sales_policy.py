@@ -1,4 +1,4 @@
-"""Decision rules for the simulated after-sales workflow."""
+"""模拟售后流程的判定规则。"""
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -38,7 +38,7 @@ class PolicyDecision:
 
 def evaluate(application_type: str | None, product_type: str | None,
              signed_at: datetime | None, now: datetime) -> PolicyDecision:
-    """Determine eligibility for submission; accepted requests still need review."""
+    """判断能否提交申请；通过判定仍需人工审核。"""
     if application_type not in {"no_reason", "quality_issue"}:
         return PolicyDecision("manual_review", "申请类型未确认", "")
     if product_type not in {"normal", "special"}:

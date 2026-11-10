@@ -1,4 +1,4 @@
-"""Trace every chat-model call without leaking prompt/response content."""
+"""记录每次对话模型调用的指标，不落提示词与回答内容。"""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ from tracing.otel_config import get_metrics
 
 
 class TracedChatModel:
-    """Thin wrapper around a LangChain chat model.
+    """对话模型的可观测包装层。
 
-    Records call count/duration/error in AgentMetrics and, when a trace
-    context is active, a content-free ``model`` event in the admin audit log.
+    在指标统计器里累计调用次数、耗时与失败数；处于追踪上下文时，
+    再往管理审计里补一条不含内容的模型事件。
     """
 
     def __init__(self, inner, model_name: str = ""):

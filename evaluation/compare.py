@@ -1,4 +1,4 @@
-"""Compare two versioned evaluation reports (only when comparable)."""
+"""比较两份带版本信息的评测报告（仅在可比对时输出差异）。"""
 
 import argparse
 import json

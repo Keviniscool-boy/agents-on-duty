@@ -104,7 +104,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize shared services when the API starts and release them on shutdown."""
+    """应用启动时初始化共享服务，停机时释放资源。"""
     global graph
 
     # 安全自检（B1）：JWT 密钥缺失直接拒绝启动，禁止使用默认密钥。
@@ -499,7 +499,7 @@ async def knowledge_search(
     request: KnowledgeSearchRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """Stable knowledge API for the Pi experiment and other clients."""
+    """面向实验子项目与其他客户端的稳定知识检索接口。"""
     service = KnowledgeService(long_term_memory)
     try:
         hits = await service.search(request.query, request.top_k, request.min_score)

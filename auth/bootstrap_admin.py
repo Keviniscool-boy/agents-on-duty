@@ -1,4 +1,4 @@
-"""Promote an existing account using local administrative access."""
+"""用本地管理手段把既有账号提升为管理员。"""
 
 import argparse
 from pathlib import Path

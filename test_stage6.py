@@ -1,4 +1,4 @@
-"""Stage 6 tests: knowledge API/MCP adapter, Pi comparison, business retention."""
+"""阶段六测试：知识接口与工具适配、实验对比、业务数据保留。"""
 
 import asyncio
 import json
@@ -196,7 +196,7 @@ def test_pi_comparison_with_fake_runners():
     assert summary["rag"]["citation_full_accuracy"] == 1.0
     assert summary["pi"]["citation_full_accuracy"] == 1.0
     assert summary["comparison"]["citation_full_delta"] == 0.0
-    # No clear win -> keep LangGraph.
+    # 没有明确优势就不更换实现，保留现有检索问答方案。
     assert summary["decision"]["expand_pi"] is False
     assert summary["decision"]["decision_basis"] == "citation_full_string_match_only"
 
@@ -264,7 +264,7 @@ def test_comparison_excludes_failures_from_quality():
     assert summary["pi"]["citation_full_accuracy"] == 1.0
     assert summary["decision"]["expand_pi"] is False
 
-    # Pi failing a case must not be hidden by excluding it from quality.
+    # 实验方案答错的用例不能因为被排除在质量分之外而被掩盖。
     rag_ok = ScriptedRunner([correct, correct])
     pi_failing = ScriptedRunner([correct, failure])
     summary = summarize(evaluate_runners(cases, rag_ok, pi_failing))

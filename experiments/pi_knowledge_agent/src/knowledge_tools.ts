@@ -28,10 +28,10 @@ const parameters = {
 };
 
 /**
- * Wraps the Python knowledge API as a Pi AgentTool.
+ * 把后端知识检索接口包装成实验智能体可用的检索工具。
  *
- * The Python service is intentionally the single source of truth for policy
- * retrieval; Pi only decides when/how to call it and how to cite the result.
+ * 政策检索的事实来源刻意收敛在后端服务一处；实验智能体只负责
+ * 决定何时调用、如何引用检索结果，不自行实现检索。
  */
 export function createKnowledgeSearchTool(
   options: KnowledgeToolOptions,

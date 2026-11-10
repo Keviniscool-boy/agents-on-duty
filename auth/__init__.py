@@ -1,1 +1,1 @@
-"""Authentication helpers for the API."""
+"""接口层的鉴权辅助模块。"""

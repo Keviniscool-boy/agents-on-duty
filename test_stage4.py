@@ -1,4 +1,4 @@
-"""Stage 4 tests: hybrid retrieval, refusal/handoff, policy metadata, metrics."""
+"""阶段四测试：混合检索、拒答与转人工、政策元数据、指标。"""
 
 import asyncio
 from datetime import datetime, timezone
@@ -13,7 +13,7 @@ from storage import after_sales_policy
 
 
 class KeywordishEmbeddings:
-    """Deterministic fake embedding: 'alpha' is the only vector-close token."""
+    """确定性假向量：只有含特定词元的文本会贴近预设向量方向。"""
 
     async def aembed_query(self, text: str) -> list[float]:
         return [1.0, 0.0] if "alpha" in text else [0.0, 1.0]
